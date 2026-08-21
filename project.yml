@@ -1,0 +1,51 @@
+name: Copy
+options:
+  bundleIdPrefix: dev.copyapp
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: 7.0.0
+
+targets:
+  Copy:
+    type: application
+    platform: macOS
+    sources:
+      - path: App/Sources
+    dependencies:
+      - package: GRDB
+    info:
+      path: App/Info.generated.plist
+      properties:
+        CFBundleName: Copy
+        CFBundleDisplayName: Copy
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSUIElement: true
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSHumanReadableCopyright: "MIT Licensed. github.com/copy"
+        CFBundleDevelopmentRegion: en
+        CFBundleLocalizations: [en, zh-Hans]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.copyapp.Copy
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_STRICT_CONCURRENCY: complete
+        ENABLE_HARDENED_RUNTIME: YES
+        # 用真实的 Apple Development 证书而不是 ad-hoc 的 "-"：macOS 的隐私授权（TCC）对签名
+        # App 按 designated requirement 记账（bundle ID + Team），重新编译不会失效；ad-hoc 签名
+        # 只能按 cdhash 记账，每次编译都变成"另一个 App"，辅助功能授权反复作废。
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: 8Y2J55823C
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        COMBINE_HIDPI_IMAGES: YES

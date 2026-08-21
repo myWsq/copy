@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Copy 验收路线图</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --ground:#FBFBFD; --surface:#FFFFFF; --surface-2:#F4F5F8;
+  --ink:#191C23; --muted:#5D6474; --faint:#8A91A1;
+  --line:#E3E6EC; --line-strong:#CDD2DC;
+  --accent:#0A5FE0; --accent-soft:#E8F0FF;
+  --ok:#127A44; --ok-soft:#E3F5EA;
+  --partial:#9A6510; --partial-soft:#FBF0DC;
+  --todo:#6B7280; --todo-soft:#EFF1F4;
+  --issue:#B4232B; --issue-soft:#FCE9EA;
+  --shadow:0 1px 2px rgba(16,20,30,.06),0 4px 16px rgba(16,20,30,.05);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#14161B; --surface:#1B1E25; --surface-2:#22262E;
+    --ink:#E9EBF1; --muted:#9AA2B2; --faint:#727A8B;
+    --line:#2B303A; --line-strong:#3A4150;
+    --accent:#57A0FF; --accent-soft:#16243C;
+    --ok:#48C88A; --ok-soft:#13291F;
+    --partial:#E0A648; --partial-soft:#2C2417;
+    --todo:#8A92A2; --todo-soft:#23272F;
+    --issue:#F0757D; --issue-soft:#2E1A1D;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 18px rgba(0,0,0,.28);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#14161B; --surface:#1B1E25; --surface-2:#22262E;
+  --ink:#E9EBF1; --muted:#9AA2B2; --faint:#727A8B;
+  --line:#2B303A; --line-strong:#3A4150;
+  --accent:#57A0FF; --accent-soft:#16243C;
+  --ok:#48C88A; --ok-soft:#13291F;
+  --partial:#E0A648; --partial-soft:#2C2417;
+  --todo:#8A92A2; --todo-soft:#23272F;
+  --issue:#F0757D; --issue-soft:#2E1A1D;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 18px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1000px; margin:0 auto; padding:0 24px 96px}
+
+/* ---------- header ---------- */
+header{padding:56px 0 28px}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11.5px; font-weight:500;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--accent); margin:0 0 14px;
+}
+h1{font-size:clamp(30px,4.4vw,42px); font-weight:600; letter-spacing:-.021em; margin:0 0 14px; text-wrap:balance}
+.lede{font-size:16.5px; color:var(--muted); max-width:64ch; margin:0}
+.lede strong{color:var(--ink); font-weight:600}
+
+/* ---------- summary ---------- */
+.summary{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(128px,1fr)); gap:1px;
+  background:var(--line); border:1px solid var(--line); border-radius:12px;
+  overflow:hidden; margin:32px 0 0;
+}
+.stat{background:var(--surface); padding:15px 17px}
+.stat .k{
+  font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--faint); margin-bottom:7px;
+}
+.stat .v{font-size:25px; font-weight:600; font-variant-numeric:tabular-nums; letter-spacing:-.02em; line-height:1}
+.stat .v small{font-size:13px; font-weight:400; color:var(--faint); margin-left:2px}
+.stat.pass .v{color:var(--ok)} .stat.issue .v{color:var(--issue)}
+
+.bar{height:6px; border-radius:99px; background:var(--surface-2); overflow:hidden; display:flex; margin-top:14px}
+.bar i{display:block; height:100%; transition:width .35s cubic-bezier(.4,0,.2,1)}
+.bar .p{background:var(--ok)} .bar .i{background:var(--issue)}
+
+/* ---------- deviations callout ---------- */
+.callout{
+  margin-top:28px; border:1px solid var(--line); border-left:3px solid var(--partial);
+  background:var(--surface); border-radius:9px; padding:17px 20px; box-shadow:var(--shadow);
+}
+.callout h2{font-size:14px; font-weight:600; margin:0 0 4px; letter-spacing:-.005em}
+.callout p{margin:0 0 12px; font-size:13.5px; color:var(--muted)}
+.callout ol{margin:0; padding-left:19px; display:flex; flex-direction:column; gap:9px}
+.callout li{font-size:13.5px}
+.callout li b{font-weight:600}
+
+/* ---------- controls ---------- */
+.controls{
+  position:sticky; top:0; z-index:20; display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+  padding:13px 0; margin:36px 0 8px; background:var(--ground);
+  border-bottom:1px solid var(--line);
+}
+button{font:inherit; cursor:pointer}
+.chip{
+  border:1px solid var(--line-strong); background:var(--surface); color:var(--muted);
+  border-radius:99px; padding:6px 14px; font-size:13px; font-weight:500; transition:.14s;
+}
+.chip:hover{border-color:var(--accent); color:var(--ink)}
+.chip[aria-pressed="true"]{background:var(--accent); border-color:var(--accent); color:#fff}
+.spacer{flex:1}
+.ghost{
+  border:1px solid var(--line-strong); background:transparent; color:var(--muted);
+  border-radius:7px; padding:6px 13px; font-size:12.5px; transition:.14s;
+}
+.ghost:hover{border-color:var(--accent); color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:5px}
+
+/* ---------- phases ---------- */
+.phase{margin-top:38px}
+.phase-head{display:flex; align-items:baseline; gap:12px; margin-bottom:5px}
+.phase-n{
+  font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:600;
+  color:var(--accent); background:var(--accent-soft); border-radius:5px; padding:2px 7px;
+}
+.phase h2{font-size:19px; font-weight:600; margin:0; letter-spacing:-.014em}
+.phase-note{font-size:13.5px; color:var(--muted); margin:0 0 15px}
+
+ul{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px}
+.item{
+  display:grid; grid-template-columns:auto 1fr; gap:13px; align-items:start;
+  background:var(--surface); border:1px solid var(--line); border-radius:9px;
+  padding:12px 15px 12px 12px; position:relative; overflow:hidden;
+}
+.item::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--todo)}
+.item[data-s="ready"]::before{background:var(--ok)}
+.item[data-s="partial"]::before{background:var(--partial)}
+.item[data-s="out"]::before{background:var(--line-strong)}
+.item[data-m="pass"]{background:var(--ok-soft); border-color:transparent}
+.item[data-m="issue"]{background:var(--issue-soft); border-color:transparent}
+
+.mark{
+  width:23px; height:23px; margin-top:1px; border-radius:6px; flex:none;
+  border:1.5px solid var(--line-strong); background:var(--surface);
+  display:grid; place-items:center; font-size:12.5px; font-weight:700; color:transparent; transition:.14s;
+}
+.mark:hover{border-color:var(--accent)}
+.item[data-m="pass"] .mark{background:var(--ok); border-color:var(--ok); color:#fff}
+.item[data-m="issue"] .mark{background:var(--issue); border-color:var(--issue); color:#fff}
+
+.head{display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:3px}
+.id{
+  font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--faint);
+  font-variant-numeric:tabular-nums;
+}
+.t{font-size:14.5px; font-weight:600; letter-spacing:-.007em}
+.tag{
+  font-family:"IBM Plex Mono",monospace; font-size:10px; font-weight:500; letter-spacing:.05em;
+  text-transform:uppercase; padding:2.5px 7px; border-radius:4px; white-space:nowrap;
+}
+.tag.ready{background:var(--ok-soft); color:var(--ok)}
+.tag.partial{background:var(--partial-soft); color:var(--partial)}
+.tag.todo{background:var(--todo-soft); color:var(--todo)}
+.tag.out{background:var(--todo-soft); color:var(--faint)}
+.line{font-size:13.5px; color:var(--muted); margin:1px 0}
+.line b{color:var(--ink); font-weight:600}
+.line em{font-style:normal; color:var(--faint)}
+kbd{
+  font-family:"IBM Plex Mono",monospace; font-size:12px; background:var(--surface-2);
+  border:1px solid var(--line); border-bottom-width:2px; border-radius:4px;
+  padding:0 5px; color:var(--ink); white-space:nowrap;
+}
+.item[data-m] .line b{color:var(--ink)}
+
+/* ---------- export ---------- */
+dialog{
+  border:1px solid var(--line); background:var(--surface); color:var(--ink);
+  border-radius:12px; padding:0; max-width:640px; width:calc(100% - 40px); box-shadow:var(--shadow);
+}
+dialog::backdrop{background:rgba(10,14,22,.55)}
+.dlg{padding:22px 24px 20px}
+.dlg h3{margin:0 0 5px; font-size:16px; font-weight:600}
+.dlg p{margin:0 0 14px; font-size:13.5px; color:var(--muted)}
+textarea{
+  width:100%; height:230px; resize:vertical; background:var(--surface-2); color:var(--ink);
+  border:1px solid var(--line); border-radius:8px; padding:12px;
+  font-family:"IBM Plex Mono",monospace; font-size:12.5px; line-height:1.65;
+}
+.dlg-foot{display:flex; justify-content:flex-end; gap:8px; margin-top:13px}
+footer{margin-top:52px; padding-top:22px; border-top:1px solid var(--line); font-size:13px; color:var(--faint)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important}}
+@media (max-width:600px){
+  header{padding-top:38px} .controls{gap:6px}
+  .item{grid-template-columns:auto 1fr; padding:11px 12px 11px 11px}
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">copy · 对标 Paste 6.6.8</p>
+  <h1>验收路线图</h1>
+  <p class="lede">按 <strong>依赖顺序</strong> 排列的十个阶段 —— 前一阶段不成立，后面测了也没意义。每项都写明「怎么操作」和「应该看到什么」，期望值取自 Paste 官方帮助中心与实机观察。点左侧方块循环标记：<strong>未测 → 通过 → 有问题</strong>，进度存在本地浏览器里。</p>
+  <div class="summary" id="summary"></div>
+  <div class="bar"><i class="p" id="barP" style="width:0"></i><i class="i" id="barI" style="width:0"></i></div>
+
+  <div class="callout">
+    <h2>先帮我确认两处偏差</h2>
+    <p>这两条我拿不准原作的真实行为，你手上有 Paste，一试便知 —— 结论会直接改代码。</p>
+    <ol>
+      <li><b>删除键。</b>Paste 文档写的是 <kbd>Delete</kbd> 删除条目，但 copy 目前用 <kbd>⌘</kbd><kbd>⌫</kbd>，因为我把 <kbd>⌫</kbd> 留给搜索框删字了。<em>请试：Paste 面板打开、没在搜索时，直接按 ⌫ 会删掉选中条目吗？</em></li>
+      <li><b>搜索怎么激活。</b>Paste 文档列了 <kbd>⌘</kbd><kbd>F</kbd>，而 copy 是面板一开就聚焦搜索框、直接打字即搜。<em>请试：Paste 面板打开后不按 ⌘F，直接敲字母 —— 是进了搜索，还是没反应？</em></li>
+    </ol>
+  </div>
+</header>
+
+<div class="controls">
+  <button class="chip" data-f="all" aria-pressed="true">全部</button>
+  <button class="chip" data-f="ready" aria-pressed="false">现在可验收</button>
+  <button class="chip" data-f="issue" aria-pressed="false">已标记问题</button>
+  <span class="spacer"></span>
+  <button class="ghost" id="export">导出问题清单</button>
+  <button class="ghost" id="reset">清空标记</button>
+</div>
+
+<main id="list"></main>
+
+<footer>状态说明：<b>可验收</b> = 已实现，请测；<b>部分</b> = 能跑但与原作有差距；<b>未实现</b> = 还没做，列出来是为了看清全貌，不用测；<b>不做</b> = 已决定排除在项目范围外。</footer>
+</div>
+
+<dialog id="dlg"><div class="dlg">
+  <h3>问题清单</h3>
+  <p>复制下面这段发给我，我按编号逐条处理。</p>
+  <textarea id="out" readonly></textarea>
+  <div class="dlg-foot"><button class="ghost" id="close">关闭</button></div>
+</div></dialog>
+
+<script>
+const K = ["ready","partial","todo","out"];
+const LABEL = {ready:"可验收",partial:"部分",todo:"未实现",out:"不做"};
+const P = [
+ [1,"捕获","不通则后面全部无意义。先确认它到底记住了什么。",[
+  ["1.1","文本捕获","复制任意一段文字","出现在最左侧第 1 张卡片，类型显示「文本」","ready"],
+  ["1.2","链接识别","复制一个 http(s) 网址","类型显示「链接」而不是「文本」","ready"],
+  ["1.3","图片捕获","截图或从网页复制一张图","卡片显示缩略图，底栏是像素尺寸","ready"],
+  ["1.4","文件捕获","在访达里复制一个文件","类型显示「文件」，底栏是所在目录","ready"],
+  ["1.5","颜色捕获","从取色器 / 设计工具复制一个颜色","Paste 会识别为「颜色」并显示色块；copy 有类型但没做识别","todo"],
+  ["1.6","富文本","从网页复制带格式的文字，粘贴到备忘录","格式应保留。卡片预览目前只显示纯文本，与原作有差距","partial"],
+  ["1.7","跳过密码","用密码管理器（桌面版）复制一条密码","<b>绝不能出现在历史里</b>。这是底线，出问题请立刻告诉我","ready"],
+  ["1.8","重复去重","把同一段文字连续复制三次","只应有一条，且被提到最前，不产生三条","ready"],
+  ["1.9","排除 App","把某个 App 加入忽略名单","未实现：字段有了，但没有设置界面可配置","todo"],
+  ["1.10","暂停捕获","<kbd>⌘</kbd><kbd>T</kbd> 临时停止记录","未实现","todo"]]],
+
+ [2,"唤起与粘贴","这条链路是整个 App 的命脉，也是最容易偶发失灵的地方。",[
+  ["2.1","热键唤起","按 <kbd>⇧</kbd><kbd>⌘</kbd><kbd>V</kbd>","面板从屏幕底部滑入。<b>测之前请先退出 Paste</b>，否则两个面板会一起弹","ready"],
+  ["2.2","Esc 关闭","面板打开时按 <kbd>esc</kbd>","面板淡出消失","ready"],
+  ["2.3","失焦自动关闭","面板打开时点击别处","应自动收起","ready"],
+  ["2.4","粘贴回原 App","在编辑器里唤起 → 选一项 → <kbd>↩</kbd>","内容粘贴到光标处，焦点回到编辑器。<em>请多试几次不同 App，这里最容易偶发失灵</em>","ready"],
+  ["2.5","纯文本粘贴","选中一条带格式的内容 → <kbd>⇧</kbd><kbd>↩</kbd>","粘贴出来不带任何格式","ready"],
+  ["2.6","快速粘贴","面板打开时按 <kbd>⌘</kbd><kbd>3</kbd>","直接粘贴第 3 项，无需先选中","ready"],
+  ["2.7","快速粘贴为纯文本","<kbd>⇧</kbd><kbd>⌘</kbd><kbd>1</kbd> 到 <kbd>⇧</kbd><kbd>⌘</kbd><kbd>9</kbd>","未实现","todo"],
+  ["2.8","复制而非粘贴","<kbd>⌘</kbd><kbd>C</kbd> 把选中项放回剪贴板但不粘贴","未实现","todo"],
+  ["2.9","无权限时的降级","在系统设置里关掉 copy 的辅助功能权限后再试粘贴","应仍把内容放进剪贴板（可手动 ⌘V），只是不自动按键，且不报错崩溃","ready"]]],
+
+ [3,"导航与选择","键盘驱动是 Paste 的核心体验，多选目前完全没做。",[
+  ["3.1","左右移动","<kbd>←</kbd> <kbd>→</kbd>","选中框移动，列表自动滚动保持可见","ready"],
+  ["3.2","跳到首项","<kbd>⌘</kbd><kbd>↑</kbd>","未实现","todo"],
+  ["3.3","跳到末项","<kbd>⌘</kbd><kbd>↓</kbd>","未实现","todo"],
+  ["3.4","扩展多选","<kbd>⇧</kbd><kbd>←</kbd> / <kbd>⇧</kbd><kbd>→</kbd> 连选多项","未实现。多选是 Paste 的重要能力，会牵动粘贴与删除逻辑","todo"],
+  ["3.5","全选","<kbd>⌘</kbd><kbd>A</kbd>","未实现","todo"]]],
+
+ [4,"搜索与筛选","中文搜索是我特意花力气的地方，请重点测。",[
+  ["4.1","打字即搜","面板打开后直接敲字","搜索框展开并过滤结果，无需先点击。<em>与原作的差异见页首待确认项</em>","partial"],
+  ["4.2","中文搜索","搜一个中文词，比如「剪贴板」","应能命中含该词的条目。<b>这是多数开源剪贴板工具做不到的</b>，务必验证","ready"],
+  ["4.3","中文输入法","切到中文输入法，输入拼音再选词","组字过程正常，方向键不会被搜索框吞掉","ready"],
+  ["4.4","短词搜索","搜 1–2 个字符，如「ab」","仍应有结果（内部会自动换一种匹配方式）","ready"],
+  ["4.5","⌘F 激活搜索","<kbd>⌘</kbd><kbd>F</kbd>","未实现","todo"],
+  ["4.6","Tab 切换焦点","<kbd>Tab</kbd> 在搜索框与结果列表间跳","未实现","todo"],
+  ["4.7","类型筛选","只看图片 / 只看链接","未实现","todo"]]],
+
+ [5,"卡片呈现","UI 保真度的主战场。几何已按你给的截图做过像素测量对齐。",[
+  ["5.1","顶栏取来源色","分别从终端、微信、浏览器复制点东西","三张卡片的顶栏应是黑 / 绿 / 蓝 —— 颜色取自各 App 图标主色","ready"],
+  ["5.2","类型与时间","看任意卡片顶栏","左上「文本 / 图片 / 链接」，下方「几分钟前」，中文系统显示中文","ready"],
+  ["5.3","来源 App 图标","看卡片右上角","显示复制来源 App 的真实图标","ready"],
+  ["5.4","底栏信息","分别看文本、图片、文件卡片","文本显示字符数，图片显示尺寸，文件显示目录","ready"],
+  ["5.5","序号","看卡片右下角","1…9 与 <kbd>⌘</kbd>+数字 对应","ready"],
+  ["5.6","选中反白","用方向键移动选中","选中卡片内容区变白底黑字并描蓝框，与原作一致","ready"],
+  ["5.7","短内容放大","复制一个 6 位验证码","应以大字号显示，一眼可读","ready"],
+  ["5.8","玻璃质感","在不同背景（深色编辑器 / 白色网页 / 桌面）上唤起面板","Liquid Glass 通透但卡片仍清晰。<em>觉得糊或太透就告诉我，tint 可调</em>","ready"],
+  ["5.9","链接富预览","复制一个网址","Paste 会抓取网页标题和缩略图；copy 只显示网址文本。<b>此项涉及联网，实现前要先跟你确认</b>","todo"],
+  ["5.10","文件缩略图","复制一个 PDF 或图片文件","Paste 显示文件预览图；copy 显示通用文档图标","todo"]]],
+
+ [6,"预览与编辑","这一整组都还没做，是 Paste 与「够用」之间的差距所在。",[
+  ["6.1","空格快速预览","选中一项按 <kbd>空格</kbd>","未实现（原作调用系统 Quick Look）","todo"],
+  ["6.2","打开链接或文件","<kbd>⌘</kbd><kbd>O</kbd>","未实现","todo"],
+  ["6.3","重命名条目","<kbd>⌘</kbd><kbd>R</kbd>","未实现","todo"],
+  ["6.4","编辑内容","<kbd>⌘</kbd><kbd>E</kbd>","未实现","todo"],
+  ["6.5","新建文本条目","<kbd>⌘</kbd><kbd>N</kbd>","未实现","todo"],
+  ["6.6","删除条目","copy 用 <kbd>⌘</kbd><kbd>⌫</kbd>，原作用 <kbd>⌫</kbd>","能删掉，但按键与原作不一致 —— 见页首待确认项","partial"],
+  ["6.7","撤销删除","<kbd>⌘</kbd><kbd>Z</kbd>","未实现。<b>误删无法恢复，验收时请当心</b>","todo"]]],
+
+ [7,"Pinboards","数据表已经建好，界面还是死的 —— 现在点了不会有反应。",[
+  ["7.1","标签栏显示","看面板顶部","显示「剪贴板」胶囊；<b>「+」和标签目前点击无反应</b>，不是 bug","partial"],
+  ["7.2","新建 Pinboard","<kbd>⇧</kbd><kbd>⌘</kbd><kbd>N</kbd>","未实现","todo"],
+  ["7.3","重命名 / 删除","右键菜单","未实现","todo"],
+  ["7.4","拖拽归类","把卡片拖到某个 Pinboard","未实现","todo"],
+  ["7.5","切换 Pinboard","<kbd>⌘</kbd><kbd>←</kbd> / <kbd>⌘</kbd><kbd>→</kbd>","未实现","todo"]]],
+
+ [8,"Paste Stack","连续粘贴队列，整块未做。规格已从原作文档确认清楚。",[
+  ["8.1","激活","<kbd>⇧</kbd><kbd>⌘</kbd><kbd>C</kbd>","未实现","todo"],
+  ["8.2","顺序入栈","激活后连续复制多项","未实现（原作：按复制顺序进栈）","todo"],
+  ["8.3","顺序粘贴","连按 <kbd>⌘</kbd><kbd>V</kbd>","未实现（原作：按栈序依次粘出）","todo"],
+  ["8.4","用过即出栈","粘贴过的条目自动从栈里移除","未实现","todo"],
+  ["8.5","反转方向","切换从上往下 / 从下往上","未实现","todo"]]],
+
+ [9,"设置与系统集成","当前最限制日常使用的一块 —— 四个关键参数全写死在代码里。",[
+  ["9.1","设置窗口","<kbd>⌘</kbd><kbd>,</kbd>","未实现。<b>我建议这是下一个该做的东西</b>","todo"],
+  ["9.2","自定义热键","改成自己习惯的组合","未实现。目前固定 ⇧⌘V，被占用时自动退到 ⌥⌘V / ⌃⇧⌘V","todo"],
+  ["9.3","忽略应用名单","指定某些 App 不记录","未实现。密码管理器的浏览器扩展只能靠这个挡住","todo"],
+  ["9.4","保留期限","设置历史保留多久","未实现，当前硬编码 30 天自动清理","todo"],
+  ["9.5","开机启动","登录时自动运行","未实现","todo"],
+  ["9.6","菜单栏菜单","点菜单栏图标","能唤起面板、跳转辅助功能设置、退出。当前生效的热键也显示在这里","ready"],
+  ["9.7","图片 OCR","搜索截图里的文字","未实现。原作靠 Vision 框架做到，macOS 26 完全本地可跑","todo"],
+  ["9.8","Spotlight 索引","在聚焦搜索里搜到剪贴板内容","未实现","todo"]]],
+
+ [10,"数据与隐私","README 对用户做了承诺，这些必须为真。",[
+  ["10.1","数据只在本地","查看 <kbd>~/Library/Application Support/Copy/</kbd>","应有 copy.sqlite 与 blobs/ 两项，无其他去向","ready"],
+  ["10.2","没有任何联网","用小雨伞 / Little Snitch 之类看它是否发起连接","<b>应当一个请求都没有</b>。将来若做链接预览，此项即失效，届时必须先问你","ready"],
+  ["10.3","备份与迁移","整个目录拷走再拷回","历史应完整还原（无界面，纯手动）","partial"],
+  ["10.4","保留期清理","超过 30 天的条目","应被自动清掉，但期限不可配置","partial"],
+  ["10.5","卸载残留","删掉 App 后","数据目录仍在，需手动删除 —— 与原作一致","ready"]]],
+
+ [11,"明确不做","这些是 Paste 有、而本项目已决定排除的，列出来是为了边界清楚。",[
+  ["11.1","iCloud 同步","跨设备同步剪贴板","不做。需要付费开发者账号与 CloudKit，且同步冲突会显著拖长周期","out"],
+  ["11.2","iPhone / iPad 端","移动端与自定义键盘","不做。工作量是 macOS 单端的三倍以上","out"],
+  ["11.3","共享 Pinboard","团队协作","不做，依赖同步","out"],
+  ["11.4","订阅与账号","付费墙","不做，本项目是开源免费的","out"],
+  ["11.5","Paste MCP","把剪贴板history 提供给 AI 工具","暂不做，但这是<b>唯一有机会超过原作</b>的方向：完全本地、不联网","out"]]]
+];
+
+let state = {}, filter = "all";
+const SK = "copy-acceptance-v1";
+try { state = JSON.parse(localStorage.getItem(SK) || "{}") || {}; } catch (e) { state = {}; }
+const save = () => { try { localStorage.setItem(SK, JSON.stringify(state)); } catch (e) {} };
+
+const list = document.getElementById("list");
+P.forEach(([n, title, note, items]) => {
+  const sec = document.createElement("section");
+  sec.className = "phase";
+  const ul = items.map(([id, t, doIt, exp, s]) => `
+    <li class="item" data-s="${s}" data-id="${id}" ${state[id] ? `data-m="${state[id]}"` : ""}>
+      <button class="mark" aria-label="标记 ${id}">${state[id] === "issue" ? "!" : "✓"}</button>
+      <div>
+        <div class="head"><span class="id">${id}</span><span class="t">${t}</span><span class="tag ${s}">${LABEL[s]}</span></div>
+        <p class="line">${doIt}</p>
+        <p class="line"><b>${exp}</b></p>
+      </div>
+    </li>`).join("");
+  sec.innerHTML = `<div class="phase-head"><span class="phase-n">${String(n).padStart(2,"0")}</span><h2>${title}</h2></div>
+    <p class="phase-note">${note}</p><ul>${ul}</ul>`;
+  list.appendChild(sec);
+});
+
+const ITEMS = [...document.querySelectorAll(".item")];
+const TOTAL = ITEMS.length;
+const TESTABLE = ITEMS.filter(i => i.dataset.s === "ready" || i.dataset.s === "partial").length;
+
+function refresh() {
+  const pass = ITEMS.filter(i => i.dataset.m === "pass").length;
+  const iss  = ITEMS.filter(i => i.dataset.m === "issue").length;
+  document.getElementById("summary").innerHTML = `
+    <div class="stat"><div class="k">总条目</div><div class="v">${TOTAL}</div></div>
+    <div class="stat"><div class="k">现在可测</div><div class="v">${TESTABLE}<small>/${TOTAL}</small></div></div>
+    <div class="stat pass"><div class="k">通过</div><div class="v">${pass}</div></div>
+    <div class="stat issue"><div class="k">有问题</div><div class="v">${iss}</div></div>
+    <div class="stat"><div class="k">未测</div><div class="v">${TESTABLE - pass - iss}</div></div>`;
+  document.getElementById("barP").style.width = (pass / TESTABLE * 100) + "%";
+  document.getElementById("barI").style.width = (iss / TESTABLE * 100) + "%";
+  ITEMS.forEach(i => {
+    const s = i.dataset.s, m = i.dataset.m;
+    const show = filter === "all" || (filter === "ready" && (s === "ready" || s === "partial")) || (filter === "issue" && m === "issue");
+    i.style.display = show ? "" : "none";
+  });
+  [...document.querySelectorAll(".phase")].forEach(p => {
+    p.style.display = [...p.querySelectorAll(".item")].some(i => i.style.display !== "none") ? "" : "none";
+  });
+}
+
+list.addEventListener("click", e => {
+  const btn = e.target.closest(".mark"); if (!btn) return;
+  const item = btn.closest(".item"), id = item.dataset.id;
+  const next = { undefined: "pass", pass: "issue", issue: undefined }[item.dataset.m];
+  if (next) { item.dataset.m = next; state[id] = next; } else { delete item.dataset.m; delete state[id]; }
+  btn.textContent = item.dataset.m === "issue" ? "!" : "✓";
+  save(); refresh();
+});
+
+document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => {
+  filter = c.dataset.f;
+  document.querySelectorAll(".chip").forEach(x => x.setAttribute("aria-pressed", x === c));
+  refresh();
+}));
+
+document.getElementById("export").addEventListener("click", () => {
+  const bad = ITEMS.filter(i => i.dataset.m === "issue");
+  const txt = bad.length
+    ? "验收发现的问题：\n\n" + bad.map(i =>
+        `${i.dataset.id} ${i.querySelector(".t").textContent}\n  期望：${i.querySelector(".line b").textContent}\n  实际：（在这里补充你看到的现象）\n`).join("\n")
+    : "还没有标记任何问题。点条目左侧方块两次即可标为「有问题」。";
+  document.getElementById("out").value = txt;
+  document.getElementById("dlg").showModal();
+});
+document.getElementById("close").addEventListener("click", () => document.getElementById("dlg").close());
+document.getElementById("reset").addEventListener("click", () => {
+  if (!confirm("清空所有标记？")) return;
+  state = {}; save();
+  ITEMS.forEach(i => { delete i.dataset.m; i.querySelector(".mark").textContent = "✓"; });
+  refresh();
+});
+
+refresh();
+</script>
+
+</body>
+</html>
