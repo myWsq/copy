@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 本项目用了 Swift 6.2 的 isolated deinit 与 SWIFT_DEFAULT_ACTOR_ISOLATION，
+      # 且部署目标是 macOS 26 —— 低于 Xcode 26 的 runner 根本编不过，早失败早清楚。
+      - name: 选择 Xcode
+        run: |
+          set -euo pipefail
+          ls -d /Applications/Xcode*.app || true
+          LATEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$LATEST"
+          xcodebuild -version
+          MAJOR=$(xcodebuild -version | head -1 | sed -E 's/Xcode ([0-9]+).*/\1/')
+          if [ "$MAJOR" -lt 26 ]; then
+            echo "::error::需要 Xcode 26+，当前 runner 最高只有 $MAJOR"
+            exit 1
+          fi
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 导入签名证书
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+
+          echo -n "$MACOS_CERT_P12" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT_PATH" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
+          rm -f "$CERT_PATH"
+
+      - name: 构建并签名 .app
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          # Release 用 Developer ID 覆盖 project.yml 里的本地开发身份（Apple Development）。
+          # --timestamp 与 Hardened Runtime（project.yml 已开）都是公证的硬性要求。
+          xcodebuild -project Copy.xcodeproj -scheme Copy -configuration Release \
+            -derivedDataPath .build \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            OTHER_CODE_SIGN_FLAGS="--timestamp" \
+            build
+          codesign -dv --verbose=2 .build/Build/Products/Release/Copy.app
+
+      - name: 打包 DMG
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          APP=.build/Build/Products/Release/Copy.app
+          mkdir -p dist/stage
+          cp -R "$APP" dist/stage/
+          ln -s /Applications dist/stage/Applications
+          hdiutil create -volname Copy -srcfolder dist/stage -ov -format UDZO dist/Copy.dmg
+          codesign --force --timestamp --sign "Developer ID Application: Shuaiqi Wang (${APPLE_TEAM_ID})" dist/Copy.dmg
+
+      # 公证 DMG 而不是裸二进制：.app/.pkg/.dmg 都支持 stapling，把票据钉进包里，
+      # 用户首次打开无需联网向苹果查询 —— 这正是裸二进制方案绕不开的那个坑。
+      - name: 公证并 staple
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${NOTARY_KEY_ID}.p8"
+          echo -n "$NOTARY_API_KEY_P8" > "$KEY_PATH"
+
+          OUT=$(xcrun notarytool submit dist/Copy.dmg \
+            --key "$KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait 2>&1) || {
+            echo "$OUT"
+            ID=$(echo "$OUT" | grep -m1 '  id:' | awk '{print $2}')
+            [ -n "$ID" ] && xcrun notarytool log "$ID" --key "$KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID"
+            rm -f "$KEY_PATH"; exit 1
+          }
+          echo "$OUT"
+          rm -f "$KEY_PATH"
+
+          xcrun stapler staple dist/Copy.dmg
+          xcrun stapler validate dist/Copy.dmg
+          spctl -a -t open --context context:primary-signature -v dist/Copy.dmg
+
+      - name: 发布
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          [ "$TAG" = "main" ] && TAG="v0.0.0-dev"
+          gh release create "$TAG" dist/Copy.dmg --title "$TAG" --generate-notes || \
+            gh release upload "$TAG" dist/Copy.dmg --clobber
+
+      - name: 清理钥匙串
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
