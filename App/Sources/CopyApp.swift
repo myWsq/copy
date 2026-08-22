@@ -103,7 +103,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setUpStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Copy")
+        // 模板图（xcassets 里已标 template-rendering-intent），系统按菜单栏明暗自动反色。
+        statusItem.button?.image = NSImage(named: "MenuBarIcon")
 
         statusMenu.addItem(withTitle: "Show Clipboard  \(activeShortcut)", action: #selector(togglePanel), keyEquivalent: "")
         statusMenu.addItem(.separator())
