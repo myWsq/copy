@@ -17,6 +17,7 @@ final class PastePanel: NSPanel {
     /// 动画播放期间两者是脱节的：滑出还没播完窗口仍 visible，于是连点会走错分支。
     private var isPresented = false
     private let frames = FrameMonitor()
+    private var revision = 0
 
     /// Paste 的条形面板贴屏幕底边通栏。
     private static let panelHeight: CGFloat = 332
@@ -147,17 +148,12 @@ final class PastePanel: NSPanel {
         //   2. 只把 rootView 换成新实例也没用 —— ClipboardBarView 里只有一个 state 引用，
         //      新旧实例内容完全相同，SwiftUI 判定无变化直接跳过求值。
         // 症状就是面板永远显示隐藏前那一刻的快照，连相对时间都冻住。
-        Perf.time("重建 hosting") {
-            let hosting = NSHostingView(rootView: ClipboardBarView(state: state))
-            // sizingOptions 置空是为了不让内容变化向上触发 NSView 布局，但它同时意味着
-            // 这个视图**不会自己拿到尺寸** —— 必须显式给 frame 并让它跟随父视图，
-            // 否则 frame 为零：layer 照常渲染，命中测试却全落空，表现为"画面正常但
-            // 鼠标点不动、键盘也没反应"。
-            hosting.sizingOptions = []
-            hosting.frame = glassView.bounds
-            hosting.autoresizingMask = [.width, .height]
-            glassView.contentView = hosting
-            hostingView = hosting
+        // 换 rootView 而不是重建 NSHostingView：重建会让 SwiftUI 从头布局全部卡片，
+        // 那段开销落在 show() 返回之后，观感上就是"按下去要等一下才弹出来"。
+        // revision 递增保证 rootView 的值真的变了，SwiftUI 才肯重新求值（见其定义）。
+        Perf.time("刷新 rootView") {
+            revision += 1
+            hostingView.rootView = ClipboardBarView(state: state, revision: revision)
         }
         state.selection = 0
 

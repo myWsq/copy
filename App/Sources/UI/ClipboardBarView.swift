@@ -4,6 +4,12 @@ import SwiftUI
 /// 底部剪贴板条。几何取自对 Paste 6.6.8 截图的像素测量（见 CLAUDE.md「参考原作」）。
 struct ClipboardBarView: View {
     @Bindable var state: AppState
+    /// 只为强制 SwiftUI 重新求值而存在。
+    ///
+    /// 窗口隐藏期间 SwiftUI 会停止追踪 @Observable，重新显示时并不知道该刷新；而只把
+    /// rootView 换成新实例也没用 —— 结构体里只有一个 state 引用，新旧完全相同，会被判定
+    /// 无变化直接跳过。给它一个每次递增的值，值真的变了才会重新求值。
+    var revision: Int = 0
 
     /// 展开后搜索条的最大宽度。
     private static let searchWidth: CGFloat = 520
@@ -170,11 +176,16 @@ struct ClipboardBarView: View {
                 // 卡片阴影就会被切在边界上留下一条硬边。上下各留出 shadowRoom 给它扩散。
                 .padding(.vertical, ClipCard.shadowRoom)
             }
-            // 列表内容一变（搜索过滤、新增条目），原来的滚动位置就失效了 —— 它可能停在
-            // 远处，而 LazyHStack 只渲染可见范围内的卡片：选中的那张不在可见区就不会被
-            // 渲染，于是高亮框看不见、鼠标也点不到（那里根本没有卡片）。
+            // 列表内容一变（搜索过滤、新增条目），原先的滚动位置就失效了，得把选中项带回视野。
+            // anchor 用 nil 而不是 .leading —— 后者把卡片左边缘死死对齐可视区左边缘，
+            // 会把那 20pt 内边距一起吃掉，第一张卡片就贴在面板边上了。
             .onChange(of: state.items.count) { _, _ in
-                proxy.scrollTo(state.selection, anchor: .leading)
+                proxy.scrollTo(state.selection, anchor: nil)
+            }
+            // 每次打开面板回到列表开头。视图树现在是复用的（见 revision），
+            // ScrollView 会记着上次关闭时停的位置。
+            .onChange(of: revision) { _, _ in
+                proxy.scrollTo(0, anchor: nil)
             }
             .onChange(of: state.selection) { _, new in
                 // anchor 传 nil = 只滚动到「刚好让它完整可见」的最小距离，目标已在视野内时不动。
