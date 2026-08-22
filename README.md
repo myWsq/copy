@@ -48,19 +48,23 @@ Data lives in `~/Library/Application Support/Copy/`.
 search that actually works for Chinese · type-to-search with full IME support · content dedup by
 fingerprint · source-app attribution, including the card's accent colour taken from the app's icon ·
 sensitive-content filtering · global hotkey with automatic fallback when taken · paste injection
-(plus plain-text and numbered quick paste) · history retention · English and Chinese UI.
+(plus plain-text and numbered quick paste) · history retention · pinboards, with inline rename,
+colour coding and drag-to-file — a filed card wears its pinboard's colour · app icon · English and
+Chinese UI.
 
 **Planned, roughly in order:**
 
 1. **Settings window** — custom hotkey, excluded apps, retention, launch at login. Right now all
    four are hard-coded, which is the most limiting gap in daily use.
-2. **Pinboards** — create, rename, drag to organize. The schema exists; the UI does nothing yet.
-3. **Paste Stack** — queue several items and paste them in sequence.
-4. **Image OCR** (Vision) so text inside screenshots becomes searchable.
-5. Rich link previews · file thumbnails (QuickLook) · drag out to other apps · item editing and
-   labels · type filters · faithful rich-text rendering.
-6. Multi-display and Stage Manager handling · app icon · signed and notarized DMG plus a Homebrew
-   cask.
+2. **Paste Stack** — queue several items and paste them in sequence.
+3. **Image OCR** (Vision) so text inside screenshots becomes searchable.
+4. **Drag out to other apps** — dragging a card currently only files it into a pinboard; the
+   pasteboard carries an internal id, so dropping one outside the app is refused rather than
+   pasting a stray number.
+5. Rich link previews · file thumbnails (QuickLook) · item editing and labels · type filters ·
+   faithful rich-text rendering.
+6. Multi-display and Stage Manager handling · a signed and notarized DMG release plus a Homebrew
+   cask (the workflow exists; nothing has been published yet).
 
 ## Privacy
 
