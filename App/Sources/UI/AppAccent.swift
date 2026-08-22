@@ -66,3 +66,4 @@ enum AppAccent {
         return NSColor(deviceWhite: luma, alpha: 1)
     }
 }
+

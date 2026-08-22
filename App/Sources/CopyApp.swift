@@ -33,9 +33,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = PastePanel(state: state, monitor: monitor)
+        panel.warmUp()
 
         monitor.onCapture = { item in
-            do { try ClipStore.shared.insert(item) } catch { Log.store.error("insert: \(error)") }
+            do {
+                try ClipStore.shared.insert(item)
+                Log.store.debug("inserted \(item.kind.rawValue, privacy: .public)")
+            } catch {
+                Log.store.error("insert failed: \(error, privacy: .public)")
+            }
         }
         monitor.start()
 
@@ -50,6 +56,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if hotKey == nil { Log.system.error("所有候选热键都被占用") }
         Log.system.notice("热键已注册: \(self.activeShortcut, privacy: .public)")
 
+        #if DEBUG
+        // 自动化测试用的触发钩子：热键会和别的剪贴板工具抢，菜单栏图标的坐标又不总能
+        // 查到，测试需要一条稳定的路径。只在 Debug 构建里存在 —— 发布版留着等于让任何
+        // 本机进程都能弹出用户的剪贴板历史。
+        DistributedNotificationCenter.default().addObserver(
+            forName: .init("dev.copyapp.Copy.togglePanel"), object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.panel.toggle() }
+        }
+        #endif
+
+        setUpMainMenu()
         setUpStatusItem()
 
         // 刻意不在启动时调用 requestAccessibility() —— 那会弹出系统授权对话框。
@@ -60,6 +78,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.system.notice("辅助功能权限未授予 —— 可从菜单栏菜单手动开启，粘贴将降级为仅写剪贴板")
         }
         try? ClipStore.shared.prune(olderThan: 30)
+    }
+
+    /// 装一个只含「编辑」的主菜单。
+    ///
+    /// macOS 的标准编辑快捷键（⌘A/⌘C/⌘V/⌘X/⌘Z）是靠主菜单里的菜单项分发的，
+    /// 而 `LSUIElement` 应用默认没有主菜单 —— 结果就是搜索框里按 ⌘A 毫无反应
+    /// （事件被转成 noop）。菜单本身不会显示，因为面板是非激活的，App 不会成为前台。
+    private func setUpMainMenu() {
+        let main = NSMenu()
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+        main.addItem(editItem)
+        NSApp.mainMenu = main
     }
 
     private func setUpStatusItem() {

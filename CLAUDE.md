@@ -32,9 +32,32 @@ make clean    # 清掉 .build/、xcodeproj、生成的 plist
 `make gen` 让它进项目**。直接调 `xcodebuild` 会得到 "cannot find X in scope"；用 `make build` 就不会，
 它已经依赖 `gen`。
 
-调试日志走 `os.Logger`（`Log.store` / `Log.clipboard` / `Log.system`）：
+调试日志走 `os.Logger`（`Log.store` / `Log.clipboard` / `Log.system`）。**必须写 `/usr/bin/log`
+的绝对路径** —— zsh 有个同名内建命令 `log`，直接写 `log show ...` 会被它劫持，只报一句
+`too many arguments`，看起来就像「日志系统是空的」。我为此误判过一次，绕了很大一圈：
+
 ```bash
-log stream --predicate 'subsystem == "dev.copyapp.Copy"' --level debug
+/usr/bin/log show --last 5m --predicate 'subsystem == "dev.copyapp.Copy"' --info --debug
+/usr/bin/log stream --predicate 'subsystem == "dev.copyapp.Copy"' --level debug
+```
+
+排查捕获问题时，直接查库能一步分清「没捕获到」还是「没渲染出来」：
+
+```bash
+sqlite3 ~/Library/Application\ Support/Copy/copy.sqlite \
+  "select id,kind,substr(text,1,30),datetime(createdAt,'localtime') from clip order by id desc limit 5;"
+```
+
+## 重启 App 的正确姿势
+
+**别用 `pkill -x Copy; sleep 1; open ...`。** `pkill` 发的是 SIGTERM，App 未必在 1 秒内退完；
+此时 `open` 发现进程还在，只会**激活旧实例**，不会启动新构建 —— 于是改动看起来"没生效"，
+而 `ps -p $(pgrep -x Copy) -o lstart=` 会暴露进程启动时间根本没变。务必等进程真正消失：
+
+```bash
+pkill -x Copy; while pgrep -x Copy >/dev/null; do sleep 0.2; done
+open .build/Build/Products/Debug/Copy.app
+ps -p "$(pgrep -x Copy)" -o lstart=    # 确认启动时间是刚才
 ```
 
 ## 验证 UI 改动
@@ -157,6 +180,64 @@ NSPasteboard ──轮询 changeCount──> ClipboardMonitor
 两者拉近，tint 越深卡片越陷进背景（0.45 时几乎融为一体）。要卡片更清晰就提亮卡片表面并加描边，
 玻璃反而可以更通透。当前 `glassTint` 默认 0.15，可调：`defaults write dev.copyapp.Copy glassTint 0.3`。
 
+12. **面板每次显示都必须重建 `NSHostingView`，别"优化"掉。** 窗口 `orderOut` 期间 SwiftUI 会
+    停止追踪 `@Observable`，隐藏时发生的数据变化不被记录，重新显示时它并不知道自己该刷新；
+    而只把 `rootView` 换成新实例同样无效 —— `ClipboardBarView` 里只有一个 state 引用，新旧
+    实例内容完全相同，SwiftUI 判定无变化直接跳过求值。
+
+    症状极具迷惑性：**面板永远显示隐藏前那一刻的快照，连相对时间都冻住**，而数据层一切正常
+    （库里有数据、`AppState.items` 也对）。排查这类问题先分清「数据层 vs 渲染层」：往库里写
+    一条再 `sqlite3` 查一下，就能立刻判定是没捕获到还是没渲染出来，省下大量瞎猜。
+
+## 性能
+
+开销集中在两处，都是受控实验实测出来的，别凭感觉改回去。埋点在 `App/Sources/System/Perf.swift`，
+默认关闭：`defaults write dev.copyapp.Copy perfLog -bool YES` 打开后会输出各阶段耗时与显示期间的
+帧统计（用 `NSView.displayLink` 数掉帧）。
+
+**打开面板** —— `orderFront` 一项就占八成，它要重建近全屏窗口的后备存储、让 Liquid Glass 重新
+采样背后的屏幕。所以收起时**挪到屏幕外而不是 `orderOut`**（`hide()` 里那句 `setFrameOrigin`），
+并在启动时 `warmUp()` 把首次开销预付掉。
+
+| | 首次 | 之后 |
+|---|---|---|
+| 改之前 | 229–290ms | 55–78ms |
+| 改之后 | **9ms** | **17–23ms** |
+
+**滚动掉帧** —— 相同滚动量下逐项开关对比：
+
+| 配置 | 掉帧 | 最差帧 |
+|---|---|---|
+| 基线 | 23 | 77.3ms |
+| 去卡片阴影 | 11 | 65.6ms |
+| 去文字渐隐 | 8 | 57.4ms |
+| 去滚动动画 | 19 | 79.3ms（无用） |
+| **组合优化后** | **4** | 57.3ms |
+
+两条结论：**给文字做渐变着色最贵**（每个字形都要参与渐变求值），换成盖一层「透明→卡片底色」的
+渐变，底色不透明所以视觉完全等价，但只是普通合成；**卡片投影次之**（离屏渲染，每张可见卡片一层），
+去掉后靠 `separatorColor` 描边区分即可。滚动动画不是瓶颈，不用为它牺牲手感。
+
+13. **卡片列表用 `HStack`，不要"优化"成 `LazyHStack`。** 惰性容器在数据源大幅缩水时
+    （搜索把 58 条过滤成 14 条）会算错可见范围，此后**只肯创建第一张卡片**，其余视图压根
+    不存在。症状极具迷惑性：日志里 `selection`、`items` 全对，界面上却是选中框看不见、
+    方向键"没反应"、鼠标点不到 —— 因为那片区域根本没有视图。给它加 `.id()` 强制重建无效。
+    代价是所有条目都真的渲染，所以 `ClipStore.pageSize` 限制在 100 条。
+
+14. **`@Observable` 的属性必须在 body 里被读到才建立依赖。** 只在 `ForEach` 闭包内部访问
+    `state.selection` 是不够的 —— 闭包是惰性执行的，body 求值那一刻没碰到它，依赖就没建。
+    表现为 `items` 变化能刷新、`selection` 变化却不刷新。要在 `cards` 开头先
+    `let selection = state.selection` 取出来。
+
+15. **`NSScreen.main` 对非激活的 accessory 应用会返回 nil。** 它的语义是"包含 key window
+    的那块屏"，而面板唤起的瞬间 App 既不是前台也还没有 key window。`guard let screen =
+    NSScreen.main else { return }` 会让 `show()` 静默退出：面板不上屏、不 makeKey、按键
+    全部落空，且没有任何报错。用 `PastePanel.targetScreen`（按鼠标位置选屏 + 多层兜底）。
+
+16. **`LSUIElement` 应用必须自建主菜单，否则标准编辑快捷键全废。** ⌘A/⌘C/⌘V/⌘X/⌘Z 是靠
+    主菜单里的 Edit 菜单项分发的，没有主菜单时事件被静默转成 `noop`，搜索框里按 ⌘A 毫无
+    反应。见 `AppDelegate.setUpMainMenu()`，菜单本身不会显示（面板非激活，App 不成为前台）。
+
 ## 已决定的事（不要反复推翻）
 
 | 决策 | 选择 | 理由 |
@@ -197,6 +278,9 @@ com.wiheads.paste` 看配置键名）。**不要反编译，不要复制它的�
 `nextPinboardShortcut`、`previousPinboardShortcut`。本项目目前只实现了第一个，且尚不可自定义。
 
 **几何照抄，材质不照抄** —— 下面这些尺寸仍以原作为准，但玻璃材质按 macOS 26 走（见「项目目标」）。
+选中态只有一圈高亮外框，卡片底色不变 —— 别被截图里某些卡片的白底误导，那是富文本内容
+自带的背景色，不是选中效果（我为此判断错过一次）。
+
 对原作截图做像素测量得到的几何（逻辑像素；2x 屏截图的数值要除以 2）：卡片 235×234、间距 21、
 pitch 256、header 高 50、卡片圆角 12、面板高 332、面板四周留边 8、面板圆角 16。卡片顶栏颜色取
 来源 App 图标的主色 —— 用「饱和度加权投票」而不是缩到 1×1 取平均，后者会把 Chrome 图标算成脏灰色。

@@ -11,17 +11,19 @@ import SwiftUI
 /// 返回 true 表示「我处理了，你别管」。这是原生做键盘协调的标准姿势，SwiftUI 没有等价物。
 struct SearchField: NSViewRepresentable {
     @Binding var text: String
+    /// 是否处于搜索态。焦点完全由它驱动：为真时抢占 first responder，为假时交还给面板。
+    let isActive: Bool
     /// 返回 true 表示该命令已被消费，不再交给文本框。
     let onCommand: (Selector) -> Bool
 
     func makeNSView(context: Context) -> NSTextField {
-        let field = AutoFocusTextField()
+        let field = NSTextField()
         field.delegate = context.coordinator
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
         field.font = .systemFont(ofSize: 12)
-        field.placeholderString = "Search"
+        field.placeholderString = Localized.search
         field.cell?.sendsActionOnEndEditing = false
         return field
     }
@@ -29,6 +31,16 @@ struct SearchField: NSViewRepresentable {
     func updateNSView(_ field: NSTextField, context: Context) {
         if field.stringValue != text { field.stringValue = text }
         context.coordinator.parent = self
+
+        // 焦点跟着 isActive 走。交还焦点时置为 nil，让面板自己接管键盘 —— 面板会在
+        // 收到可打印字符时重新把 isActive 打开，所以"直接打字即搜索"依然成立。
+        guard let window = field.window else { return }
+        let editing = window.firstResponder === field.currentEditor()
+        if isActive, !editing {
+            window.makeFirstResponder(field)
+        } else if !isActive, editing {
+            window.makeFirstResponder(nil)
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -44,18 +56,6 @@ struct SearchField: NSViewRepresentable {
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             parent.onCommand(selector)
-        }
-    }
-}
-
-/// 一进入窗口就抢焦点 —— 面板一弹出即可直接打字，无需先点击搜索框。
-private final class AutoFocusTextField: NSTextField {
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        guard window != nil else { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let window else { return }
-            window.makeFirstResponder(self)
         }
     }
 }

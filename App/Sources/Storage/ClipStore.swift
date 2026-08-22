@@ -77,6 +77,17 @@ nonisolated final class ClipStore: Sendable {
         }
     }
 
+    /// 把一条记录提到最新。
+    ///
+    /// 粘贴之后该条内容就是系统剪贴板的当前内容，理应回到历史第一位。不能靠自我捕获来
+    /// 实现 —— 捕获路径被 `suppressNextChange()` 挡住了（否则会形成回环），而且那样记下的
+    /// 来源会变成粘贴的目标 App，语义就错了。所以显式更新时间戳。
+    func touch(id: Int64) throws {
+        _ = try dbQueue.write { db in
+            try ClipItem.filter(key: id).updateAll(db, Column("createdAt").set(to: Date()))
+        }
+    }
+
     func delete(id: Int64) throws {
         try dbQueue.write { db in
             if let item = try ClipItem.fetchOne(db, key: id), let blob = item.blobPath {
@@ -108,7 +119,14 @@ nonisolated final class ClipStore: Sendable {
     // MARK: - 读取
 
     /// 时间倒序取历史。`query` 非空时走 FTS5，否则直接翻表。
-    func recent(limit: Int = 200, query: String = "", pinboardID: Int64? = nil) throws -> [ClipItem] {
+    /// 一次取多少条。
+    ///
+    /// 卡片用的是 HStack 而非 LazyHStack（原因见 ClipboardBarView 里的注释），所有条目
+    /// 都会真的渲染，条数直接决定滚动开销。面板是"最近用过的"快速取用口，不是历史浏览器 ——
+    /// 更早的内容靠搜索找，所以不必一次铺出几百张。
+    static let pageSize = 100
+
+    func recent(limit: Int = pageSize, query: String = "", pinboardID: Int64? = nil) throws -> [ClipItem] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         return try dbQueue.read { db in
             // trigram 分词器要求匹配串 ≥3 字符；更短的查询退回 LIKE，否则会搜不到结果。
