@@ -180,14 +180,23 @@ NSPasteboard ──轮询 changeCount──> ClipboardMonitor
 两者拉近，tint 越深卡片越陷进背景（0.45 时几乎融为一体）。要卡片更清晰就提亮卡片表面并加描边，
 玻璃反而可以更通透。当前 `glassTint` 默认 0.15，可调：`defaults write dev.copyapp.Copy glassTint 0.3`。
 
-12. **面板每次显示都必须重建 `NSHostingView`，别"优化"掉。** 窗口 `orderOut` 期间 SwiftUI 会
-    停止追踪 `@Observable`，隐藏时发生的数据变化不被记录，重新显示时它并不知道自己该刷新；
-    而只把 `rootView` 换成新实例同样无效 —— `ClipboardBarView` 里只有一个 state 引用，新旧
-    实例内容完全相同，SwiftUI 判定无变化直接跳过求值。
+12. **面板复用 `NSHostingView` 靠的是 `revision` 递增，这两件事是一对，别拆开。**
+    窗口 `orderOut` 期间 SwiftUI 会停止追踪 `@Observable`，隐藏时发生的数据变化不被记录，
+    重新显示时它并不知道自己该刷新；而只把 `rootView` 换成新实例同样无效 —— `ClipboardBarView`
+    里只有一个 state 引用，新旧实例内容完全相同，SwiftUI 判定无变化直接跳过求值。
 
     症状极具迷惑性：**面板永远显示隐藏前那一刻的快照，连相对时间都冻住**，而数据层一切正常
     （库里有数据、`AppState.items` 也对）。排查这类问题先分清「数据层 vs 渲染层」：往库里写
     一条再 `sqlite3` 查一下，就能立刻判定是没捕获到还是没渲染出来，省下大量瞎猜。
+
+    最早的做法是每次 `show()` 重建 `NSHostingView`。能解决问题，但要让 SwiftUI 从头布局全部
+    卡片，这段开销落在 `show()` 返回之后，观感上就是「按下热键要等一下才弹出来」。现在改为
+    复用同一个 hosting view 只换 `rootView`，并让 `ClipboardBarView.revision` 每次递增 ——
+    值真的变了 SwiftUI 才肯重新求值。`revision` 看起来像个没人读的无用属性，
+    **删掉它就等于退回上面那个 bug**，它是复用能成立的唯一前提。
+
+    代价是视图树被复用，`ScrollView` 会记着上次关闭时停的位置，所以 `revision` 变化时要显式
+    滚回开头。
 
 ## 性能
 
@@ -238,6 +247,21 @@ NSPasteboard ──轮询 changeCount──> ClipboardMonitor
     主菜单里的 Edit 菜单项分发的，没有主菜单时事件被静默转成 `noop`，搜索框里按 ⌘A 毫无
     反应。见 `AppDelegate.setUpMainMenu()`，菜单本身不会显示（面板非激活，App 不成为前台）。
 
+17. **`icon.json` 里 `fill` 和 `fill-specializations` 不能并存。** 两个都写时深色变体被静默
+    忽略，背景回退成系统黑、品牌绿整个消失，而 `actool` 不报任何错。要深色变体就只写
+    `fill-specializations`，第一项不带 `appearance` 即默认外观。
+
+    验证不用开 Icon Composer 的 GUI —— 它自带一个未公开的 CLI 可以离线渲染各种外观：
+
+    ```bash
+    ICT="/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"
+    "$ICT" App/Resources/Copy.icon --export-image --output-file /tmp/p.png \
+      --platform macOS --rendition Default --width 512 --height 512 --scale 2
+    ```
+
+    `--rendition` 可选 `Default` / `Dark` / `TintedDark`（配 `--tint-color`）。它跟着 Xcode
+    版本走，升级后可能失效，但只是验证手段，不在构建链路里。
+
 ## 已决定的事（不要反复推翻）
 
 | 决策 | 选择 | 理由 |
@@ -252,6 +276,8 @@ NSPasteboard ──轮询 changeCount──> ClipboardMonitor
 | 面板材质 | `NSGlassEffectView`（Liquid Glass） | 面板就是一层浮在桌面上的玻璃，正是这个材质的设计用途 |
 | 卡片材质 | 实色，**不玻璃化** | glass 无法采样 glass，嵌套会失真；且卡片要承载文字和彩色顶栏，玻璃会同时损害可读性与来源识别度 |
 | 面板外观 | 固定 `.darkAqua` | 「选中即反白」的卡片设计依赖深色底衬托；跟随系统切到浅色会让选中态与普通态难以区分。系统 HUD 类浮层同样固定外观 |
+| App 图标 | Icon Composer 的 `.icon` | macOS 26 自己渲染 Liquid Glass（镜面边、半透、投影、深色变体）。手绘进 PNG 会和系统效果叠加，且永远出不来深色/Tinted 变体。素材只给一层白色字形 + 品牌绿，重新生成见 `docs/icon/extract-glyph.swift` |
+| 菜单栏图标 | app 图标同一字形的模板图 | 同源才读作同一个标识；模板图只有 alpha 有意义，系统按菜单栏明暗自动反色。不用 SF Symbol（通用符号没有辨识度），也不套 Paste 那样的圆角方框 —— 方框是为了让孤立的字母 P 成为标识，我们的 C 有缺口和箭头，轮廓本身够独特，加框只会把它挤到 11pt 把细节糊掉 |
 
 数据落在 `~/Library/Application Support/Copy/`（`copy.sqlite` + `blobs/`）。
 
