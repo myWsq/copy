@@ -198,6 +198,27 @@ NSPasteboard ──轮询 changeCount──> ClipboardMonitor
     代价是视图树被复用，`ScrollView` 会记着上次关闭时停的位置，所以 `revision` 变化时要显式
     滚回开头。
 
+## SwiftUI 与 AppKit 的接缝：该在哪一层解决
+
+面板是 SwiftUI 画的，但里面必须嵌真正的 `NSTextField`（否则中文输入法不工作），于是两套
+体系并存。**SwiftUI 的 Button、手势、视图对 AppKit 的响应链一无所知** —— 它没有 first
+responder 的概念，点了它的按钮不会让文本框交出焦点，键盘事件也不按它的视图层级走。
+
+这条缝已经咬过三次，每次的正解都一样：**在 AppKit 层（面板/窗口）统一接管，而不是在
+SwiftUI 层逐个视图打补丁**。
+
+| 症状 | 错误做法 | 正解 |
+|---|---|---|
+| 搜索框抢焦点 / 交不出焦点 | 让 `NSTextField` 自己在 `viewDidMoveToWindow` 抢 | 焦点由 `isActive` 单向驱动，`updateNSView` 里 `makeFirstResponder` |
+| 没搜索时方向键、↩ 该归卡片列表 | 在 SwiftUI 里做键盘处理 | `PastePanel.keyDown` 接管，搜索态下再由 `doCommandBy` 转发 |
+| 改名时点别处要保存 | 给每个按钮包一层"先交还焦点" | `PastePanel.sendEvent` 拦所有 mouseDown，落点在编辑框外就 resign |
+
+判断依据很简单：**如果一个行为需要"每加一个控件都记得处理一次"，那它就该被移到事件源头**。
+逐处接线不是不能用，是维护不住 —— 漏掉一处就是一个只在特定操作顺序下才暴露的 bug。
+
+注意文本编辑期间 `window.firstResponder` 是**共享的 field editor（`NSTextView`）**，不是那个
+`NSTextField`，判断落点、比较焦点都要按前者来。
+
 ## 性能
 
 开销集中在两处，都是受控实验实测出来的，别凭感觉改回去。埋点在 `App/Sources/System/Perf.swift`，
@@ -222,6 +243,12 @@ NSPasteboard ──轮询 changeCount──> ClipboardMonitor
 | 去文字渐隐 | 8 | 57.4ms |
 | 去滚动动画 | 19 | 79.3ms（无用） |
 | **组合优化后** | **4** | 57.3ms |
+
+**截图（`cacheDisplay`）必须避开玻璃层。** 逐层实测同一块区域：SwiftUI 宿主视图 22ms，
+往上到 `NSGlassEffectView` 就变 44ms —— 玻璃要重新采样背景，整整一倍。拖拽缩略图因此截
+`NSHostingView` 而不是 `window.contentView`（68ms → 41ms）。剩下的 41ms 里约 14ms 是遍历
+视图树的固定成本（截 10×10 的小块也要这么多，因为卡片列表是非 lazy 的 `HStack`，60 张全在
+树里），约 12ms 是光栅化。降到 1x 能省掉后一半，但卡片上有文字，Retina 上会糊，不划算。
 
 两条结论：**给文字做渐变着色最贵**（每个字形都要参与渐变求值），换成盖一层「透明→卡片底色」的
 渐变，底色不透明所以视觉完全等价，但只是普通合成；**卡片投影次之**（离屏渲染，每张可见卡片一层），
@@ -261,6 +288,40 @@ NSPasteboard ──轮询 changeCount──> ClipboardMonitor
 
     `--rendition` 可选 `Default` / `Dark` / `TintedDark`（配 `--tint-color`）。它跟着 Xcode
     版本走，升级后可能失效，但只是验证手段，不在构建链路里。
+
+18. **卡片拖拽的预览是自绘的，不要用 `NSDraggingSession` 的会话图像。** 这一代 macOS 会在
+    开场动画里把会话图像压进 128×128 的标准盒子，公开 API（`draggingFormation`、
+    `enumerateDraggingItems` 重设 `draggingFrame`、`imageComponentsProvider`）和私有开关
+    （`animatesToDraggingFormationOnBeginDrag`）都拿不回原尺寸 —— 用最小复现程序逐项排除过。
+
+    所以分工是：**会话只管数据与落点**（pasteboard、标签的 `onDrop`、松手语义、加号光标），
+    `NSDraggingItem` 只给 `draggingFrame`、**不给 contents**；**预览是一个自己的透明窗口**
+    （`level` = `CGWindowLevelForKey(.draggingWindow)`、`ignoresMouseEvents = true` 让落点穿透），
+    卡片位图画在里面的一层 `CALayer` 上，`anchorPoint` 设在光标抓点，于是跟手和缩放都不用补偿。
+    原作 Paste 同样如此 —— 拖拽期间它会挂出一个全屏、layer 500 的透明窗口。
+
+    这条一并治了掉帧：系统不再为会话图像走 CPU 重绘，预览只是普通图层，每个鼠标事件改一次
+    `position`，纯 GPU 合成。**别再试图和系统抢会话图像的控制权** —— 之前"缩略图自己变小、
+    怎么改都改不好"绕了很久，中途写过"每帧核对再写回"的对抗逻辑，那正是卡顿的来源。
+
+    另外，拖拽状态必须由 `PastePanel` 持有（`dragCoordinator`），不能挂在卡片的 `NSView` 上：
+    会话的生命周期由系统决定，卡片视图的由 SwiftUI 决定，视图一被重建，图像来源就断了。
+
+19. **`draggingSession(_:endedAt:)` 比目标的 `performDrop` 晚约 320ms 才到。** macOS 要在
+    `performDrop` 返回后走完自己的拖放收尾，才回头通知源端。这 320ms 里主线程完全空闲 ——
+    所以任何"松手后该立刻消失的东西"都不能挂在 `endedAt` 上收，否则它会在屏幕上多挂约 20 帧。
+
+    症状是"数据已生效、视觉还挂着"：卡片顶栏在 `performDrop` 那一帧就换成了收藏夹颜色，
+    拖拽预览却还悬着不走。这**不是掉帧也不是阻塞**（实测写库 1.7–6.7ms、reload 0.9–2.5ms，
+    全在一帧内），照着"卡顿"去优化耗时会白忙一场。正解是把收场提前到落点侧：
+    `AppState.dropAssign` 先 `dragCoordinator.dropConcluded()` 再 `assign`，`endedAt` 里那份
+    降级成兜底。
+
+20. **`CADisplayLink` 在拖拽期间不被调度，掉帧数据不可信。** 拖拽跑在
+    `-[NSCoreDragManager _dragUntilMouseUp:]` 的嵌套事件循环里，`FrameMonitor` 那套
+    `view.displayLink(...)` + `forMode: .common` 在这个 mode 下收不到回调，于是把"回调没来"
+    记成了"掉了 24 帧"。同一份 `sample` 数据里主线程有 1254/1701 个采样卡在 `mach_msg` 空闲
+    等待 —— 自己的主线程根本不忙。**拖拽卡顿要用 `sample` 抓调用栈，不要看 FrameMonitor 的数字。**
 
 ## 已决定的事（不要反复推翻）
 

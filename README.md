@@ -1,3 +1,5 @@
+<img src="docs/icon/icon.png" width="128" alt="Copy app icon">
+
 # copy
 
 An open-source macOS clipboard manager — a faithful re-creation of [Paste](https://pasteapp.io).

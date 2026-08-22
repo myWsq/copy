@@ -59,6 +59,10 @@ struct ClipboardBarView: View {
             }
         case #selector(NSResponder.deleteToBeginningOfLine(_:)):    // ⌘⌫
             state.deleteSelected()
+        case #selector(NSResponder.moveToBeginningOfLine(_:)):      // ⌘←
+            state.cyclePinboard(by: -1)
+        case #selector(NSResponder.moveToEndOfLine(_:)):            // ⌘→
+            state.cyclePinboard(by: 1)
         default:
             return false    // 其余按键归文本框，退格才能正常删字
         }
@@ -71,6 +75,20 @@ struct ClipboardBarView: View {
     ///
     /// `SearchField` 始终留在视图树里，只用宽度和透明度控制显隐 —— 用 `if` 把它换进换出
     /// 会重建 NSTextField，焦点随之丢失，就没法"直接打字即搜索"了。
+    /// 空状态：一行大字，不加图标 —— 与原作一致。三种情况分开写，笼统一句"没有内容"
+    /// 会让人分不清是搜没搜到、还是这个收藏夹本来就空。
+    private var emptyState: some View {
+        let text: String = {
+            if !state.query.isEmpty { return Localized.emptySearch }
+            if state.activePinboardID != nil { return Localized.emptyBoard }
+            return Localized.emptyHistory
+        }()
+        return Text(text)
+            .font(.system(size: 30, weight: .regular))
+            .foregroundStyle(.white.opacity(0.22))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var toolbar: some View {
         HStack(spacing: 10) {
             Spacer(minLength: 0)
@@ -89,7 +107,10 @@ struct ClipboardBarView: View {
                     withAnimation(Self.searchAnimation) { state.isSearching = true }
                 }
 
-                SearchField(text: $state.query, isActive: state.isSearching, onCommand: handleCommand)
+                // 改名时把焦点让出去，两个 NSTextField 不能同时抢 first responder
+                SearchField(text: $state.query,
+                            isActive: state.isSearching && state.renamingPinboardID == nil,
+                            onCommand: handleCommand)
                     // 高度必须锁：NSTextField 的固有高度比文字大不少，会把整条搜索条顶厚。
                     .frame(maxWidth: state.isSearching ? .infinity : 1, maxHeight: 17)
                     .opacity(state.isSearching ? 1 : 0)
@@ -111,15 +132,57 @@ struct ClipboardBarView: View {
                     )
             }
 
-            // 标签保持原样，不随搜索态变形 —— 之前把标题换成空串，SwiftUI 会给文字做
-            // 淡出加宽度动画，看着就是"按钮自己在渐变"。搜索条限宽后空间本来就够。
+            // 搜索展开时标签只留图标/圆点，把横向空间让给搜索条 —— 与原作一致。
             PinboardTab(title: Localized.clipboard, symbol: "clock.arrow.circlepath", tint: nil,
-                        isActive: state.activePinboardID == nil) { state.activePinboardID = nil }
-            ForEach(state.pinboards) { board in
-                PinboardTab(title: board.name, symbol: "circle.fill", tint: .systemAccent,
-                            isActive: state.activePinboardID == board.id) { state.activePinboardID = board.id }
+                        showsTitle: !state.isSearching,
+                        isActive: state.activePinboardID == nil,
+                        draggedClip: { state.draggingClipID },
+                        onDropClip: { state.dropAssign(clipID: $0, to: nil) }) {   // 拖回这里 = 移出收藏夹
+                state.activePinboardID = nil
             }
-            ToolbarIconButton(symbol: "plus", isActive: false, showsChrome: true) { }
+            ForEach(state.pinboards) { board in
+                PinboardTab(title: board.name, symbol: "circle.fill",
+                            tint: PinboardPalette.color(board.colorIndex),
+                            showsTitle: !state.isSearching,
+                            isActive: state.activePinboardID == board.id,
+                            renaming: state.renamingPinboardID == board.id,
+                            onCommitName: { state.rename(board, to: $0) },
+                            onCancelName: { state.cancelRename() },
+                            draggedClip: { state.draggingClipID },
+                            onDropClip: { state.dropAssign(clipID: $0, to: board.id) },
+                            action: { state.activePinboardID = board.id })
+                    // 双击原地改名，用 simultaneousGesture 而**不是** `.onTapGesture(count: 2)`。
+                    //
+                    // 只要视图上存在双击手势，SwiftUI 就会让单击先等满一个双击判定窗口
+                    // （系统的双击间隔，两三百毫秒）才敢响应 —— 那不是掉帧，是明明白白的
+                    // 等待，切换收藏夹会明显"不跟手"。simultaneousGesture 与 Button 并行，
+                    // 单击零延迟，双击再额外触发改名。代价是双击会先切换一次到该收藏夹，
+                    // 但那正是双击的目标，无所谓。
+                    .simultaneousGesture(TapGesture(count: 2).onEnded {
+                        state.isSearching = false
+                        state.renamingPinboardID = board.id
+                    })
+                    // 右键菜单盖在标签上层，见 PinboardMenu.swift —— 要的是原作那种一行圆点，
+                    // SwiftUI 的 .contextMenu 放不进自定义视图。它只认领右键，左键穿透。
+                    .overlay(
+                        PinboardContextMenu(
+                            colorIndex: board.colorIndex,
+                            onRename: {
+                                state.isSearching = false
+                                state.renamingPinboardID = board.id
+                            },
+                            onDelete: { state.delete(board) },
+                            onPickColor: { state.setColor(board, to: $0) }
+                        )
+                    )
+            }
+            // 搜索时收起「+」：这时是在找东西，不是在整理，新建入口只会占地方
+            ToolbarIconButton(symbol: "plus", isActive: false, showsChrome: true) {
+                withAnimation(Self.searchAnimation) { state.createPinboard() }
+            }
+            .help(Localized.newBoard)
+            .frame(width: state.isSearching ? 0 : 28)
+            .opacity(state.isSearching ? 0 : 1)
 
             Spacer(minLength: 0)
         }
@@ -140,6 +203,10 @@ struct ClipboardBarView: View {
         let selection = state.selection
         let now = state.referenceDate
         let showsIndex = state.isCommandDown
+        // 收藏夹 id → 调色板下标。归入收藏夹的卡片顶栏换成收藏夹的颜色（对标 Paste，
+        // 在「剪贴板」总览里同样生效），未归类的维持来源 App 主色。
+        let boardColors: [Int64: Int] = Dictionary(uniqueKeysWithValues:
+            state.pinboards.compactMap { board in board.id.map { ($0, board.colorIndex) } })
 
         return ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
@@ -149,26 +216,73 @@ struct ClipboardBarView: View {
                 // 之后只肯创建第一张卡片，其余视图压根不存在 —— 表现为选中框看不见、鼠标
                 // 点不到，而日志里 selection、items 一切正常，极难想到是渲染层的问题。
                 // 试过给它加 .id() 强制重建，无效。
+                // **用 HStack，不要用 LazyHStack。**（2026-08-22 二次确认，别再试第三回）
+                //
+                // LazyHStack 在数据源大幅缩水时（搜索把 100 条过滤成 30 条）会算错可见范围，
+                // 之后只肯创建第一张卡片 —— 选中框看不见、鼠标点不到，而日志里 selection、
+                // items 一切正常。第一次以为是并存的 @Observable 依赖 bug 所致，修好后重试，
+                // 症状照旧。给它加 .id() 强制重建也无效。
+                //
+                // 代价是所有条目都真的渲染，所以 ClipStore.pageSize 压得比较小。
                 HStack(spacing: ClipCard.gap) {
-                    // **不要**改成 `ForEach(state.items.indices)` 再在 body 里取
-                    // `state.items[index]` —— 那会让每张卡片各自建立一条对 items 的依赖，
-                    // 上百个依赖节点会把 AttributeGraph 压垮（实测 UI 开销涨了近 3 倍）。
-                    // 这里 items 只在 ForEach 外被读一次。
+                    // identity 用 fingerprint。试过换成位置（想让视图原地复用、免去销毁重建），
+                    // 实测反而更慢 —— 内容全变时逐属性 diff 的代价高于直接重建。
+                    //
+                    // 仍要用 `Array(enumerated())` 在 ForEach **外**读一次 items：改成
+                    // `ForEach(state.items.indices)` 再在闭包里取 `state.items[index]`，
+                    // 会让每张卡片各自建立一条对 items 的依赖，上百个依赖节点能把
+                    // AttributeGraph 压垮（实测 UI 开销涨了近 3 倍）。
                     ForEach(Array(state.items.enumerated()), id: \.element.fingerprint) { index, item in
                         ClipCard(item: item, index: index, isSelected: index == selection,
-                                 now: now, showsIndex: showsIndex)
+                                 now: now, showsIndex: showsIndex,
+                                 boardColorIndex: item.pinboardID.flatMap { boardColors[$0] })
                             .id(index)
-                            // 两段式：点未选中的卡片先选中它，点已选中的才执行粘贴。
-                            // 单击即粘贴太容易手滑，把内容直接送进别人的输入框收不回来。
-                            .onTapGesture {
-                                // 同样要显式包动画，手势回调也在禁用隐式动画的事务里
-                                withAnimation(Self.searchAnimation) { state.isSearching = false }
-                                if state.selection == index {
-                                    state.onPaste?(false)
-                                } else {
-                                    state.selection = index
+                            // 拖拽和单击都交给 AppKit 层，见 CardDragSource：
+                            // 需要"拖出卡片范围后缩略图变小"，SwiftUI 的静态预览做不到，
+                            // 而且它的预览会实时渲染整张卡片，拖起来掉帧。
+                            .overlay(
+                                CardDragSource(clipID: item.id ?? -1) {
+                                    // 手势回调在禁用隐式动画的事务里，动画得显式包
+                                    withAnimation(Self.searchAnimation) { state.isSearching = false }
+                                    if state.selection == index {
+                                        state.onPaste?(false)
+                                    } else {
+                                        state.selection = index
+                                    }
+                                }
+                            )
+                            .contextMenu {
+                                Menu(Localized.pin) {
+                                    ForEach(state.pinboards) { board in
+                                        Button {
+                                            state.assign(item, to: board.id)
+                                        } label: {
+                                            Label {
+                                                Text(board.name)
+                                            } icon: {
+                                                Image(nsImage: PinboardPalette.dotImage(board.colorIndex))
+                                            }
+                                        }
+                                    }
+                                    if !state.pinboards.isEmpty { Divider() }
+                                    // 建一个新的并直接放进去 —— 想收藏时往往才意识到要开个新分类
+                                    Button(Localized.createPinboard) {
+                                        state.createPinboard(containing: item)
+                                    }
+                                }
+                                if item.pinboardID != nil {
+                                    Button(Localized.removeFromBoard) { state.assign(item, to: nil) }
+                                }
+                                Divider()
+                                Button(Localized.deleteItem, role: .destructive) {
+                                    if let id = item.id {
+                                        try? ClipStore.shared.delete(id: id)
+                                        state.reload()
+                                    }
                                 }
                             }
+                            // 两段式：点未选中的卡片先选中它，点已选中的才执行粘贴。
+                            // 单击即粘贴太容易手滑，把内容直接送进别人的输入框收不回来。
                     }
                 }
                 .padding(.horizontal, 20)
@@ -194,10 +308,9 @@ struct ClipboardBarView: View {
                 withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(new, anchor: nil) }
             }
             .overlay {
-                if state.items.isEmpty {
-                    ContentUnavailableView(state.query.isEmpty ? "Nothing copied yet" : "No matches",
-                                           systemImage: "doc.on.clipboard")
-                }
+                // 自己画空状态，不用 ContentUnavailableView —— 它在这个非激活面板 + 玻璃
+                // 背景下只渲染出一个白色小方块，文字压根不出来。
+                if state.items.isEmpty { emptyState }
             }
         }
         // 64(工具栏) + 250(卡片区，含上下各 8 的阴影余量) + 18 = 332，仍精确填满面板。
@@ -248,7 +361,7 @@ private struct Pill: ViewModifier {
             .foregroundStyle(.white.opacity(0.45))
             .padding(.horizontal, horizontal)
             .padding(.vertical, 2.5)
-            .background(Color(nsColor: .underPageBackgroundColor), in: .capsule)
+            .background(Palette.surface, in: .capsule)
     }
 }
 
@@ -258,31 +371,34 @@ private struct Pill: ViewModifier {
 /// 的图案填充，且 layer-backed 的 NSView 会把绘制结果缓存进 layer，滚动时不重绘。
 /// 先后试过两种更"SwiftUI"的写法都不行 —— Canvas 逐格绘制的 draw closure 每次布局都重跑；
 /// `Image.resizable(resizingMode: .tile)` 实测也会拖慢滚动。
-private struct Checkerboard: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { CheckerboardView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
-private final class CheckerboardView: NSView {
-    private static let tile: NSImage = {
+/// 透明图片的底纹。
+///
+/// 整块一次画好存成一张位图，之后就是贴图 —— 不用 `NSColor(patternImage:)` 循环填充，
+/// 也不用 `NSView`：卡片尺寸是固定的，图案没有任何随内容变化的部分，实时算没有意义。
+/// 这块底纹在滚动和拖拽截图时会被反复要求重绘，省下的就是这些次数。
+private enum CheckerImage {
+    static let shared: NSImage = {
+        let size = ClipCard.size
         let cell: CGFloat = 9
-        let image = NSImage(size: NSSize(width: cell * 2, height: cell * 2))
+        let image = NSImage(size: size)
         image.lockFocus()
         NSColor(white: 0.16, alpha: 1).setFill()
-        NSRect(x: 0, y: 0, width: cell * 2, height: cell * 2).fill()
+        NSRect(origin: .zero, size: size).fill()
         NSColor(white: 0.21, alpha: 1).setFill()
-        NSRect(x: 0, y: 0, width: cell, height: cell).fill()
-        NSRect(x: cell, y: cell, width: cell, height: cell).fill()
+        var y: CGFloat = 0
+        var row = 0
+        while y < size.height {
+            var x: CGFloat = row.isMultiple(of: 2) ? 0 : cell
+            while x < size.width {
+                NSRect(x: x, y: y, width: cell, height: cell).fill()
+                x += cell * 2
+            }
+            y += cell
+            row += 1
+        }
         image.unlockFocus()
         return image
     }()
-
-    override var isOpaque: Bool { true }   // 两档灰都不透明，省掉与下层的混合
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor(patternImage: Self.tile).setFill()
-        dirtyRect.fill()
-    }
 }
 
 /// 工具栏上的图标按钮，悬停时浮出与标签一致的胶囊底色。
@@ -314,27 +430,95 @@ private struct ToolbarIconButton: View {
 private struct PinboardTab: View {
     let title: String, symbol: String
     let tint: Color?
+    /// 是否展示文字。搜索展开时置 false，文字会被"挤"没而不是淡出。
+    var showsTitle: Bool = true
     let isActive: Bool
+    var renaming: Bool = false
+    var onCommitName: ((String) -> Void)? = nil
+    var onCancelName: (() -> Void)? = nil
+    /// 当前正被拖拽的卡片 id；nil 表示没有进行中的内部拖拽（外来拖放一律拒收）。
+    /// 用闭包惰性读取，不在 body 里建立对 draggingClipID 的依赖。
+    var draggedClip: () -> Int64? = { nil }
+    /// 有卡片拖到这个标签上松手时回调，参数是那条记录的 id。
+    var onDropClip: ((Int64) -> Void)? = nil
     let action: () -> Void
 
     @State private var hovering = false
+    /// 编辑中的名字。宽度跟着它走，所以要实时同步。
+    @State private var draft = ""
+    /// 文字的自然宽度。要做"挤压"动画就得有个具体的目标值 —— frame 在 nil 和 0 之间
+    /// 是插值不出来的，必须量出来。
+    @State private var titleWidth: CGFloat = 0
+    @State private var dropTargeted = false
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
+        Button(action: renaming ? {} : action) {
+            HStack(spacing: showsTitle ? 5 : 0) {
                 Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(tint ?? .secondary)
-                if !title.isEmpty { Text(title).font(.system(size: 13)) }
+                if renaming {
+                    // 用隐藏的原文字定住宽度，输入框以 overlay 叠在上面 —— 否则一进改名
+                    // 标签宽度就跳一下，整条工具栏跟着重排。
+                    //
+                    // 必须是 overlay 而不是 ZStack：ZStack 的宽度取子视图最大值，而
+                    // NSTextField 没有固有宽度上限，会把标签撑成横跨整条工具栏。
+                    // overlay 的尺寸则跟随下面那个 Text。
+                    // 宽度由这个隐藏 Text 决定：进场时等于原名（不跳变），随后跟着实时输入走。
+                    Text(draft.isEmpty ? title : draft)
+                        .font(.system(size: 13))
+                        .opacity(0)
+                        .frame(minWidth: 24)          // 清空时不至于塌成一条缝
+                        .overlay {
+                            InlineNameField(initial: title,
+                                            onTextChange: { draft = $0 },
+                                            onCommit: { onCommitName?($0) },
+                                            onCancel: { onCancelName?() })
+                                .frame(height: 17)
+                        }
+                } else if !title.isEmpty {
+                    // 文字始终在视图树里，靠宽度动画到 0 + 裁剪被"挤"出去 —— 圆点因此
+                    // 平滑地靠拢过来，和搜索条的展开是同一套运动。
+                    // 换成条件插入（if）或淡出的话，圆点在动、文字却在褪色，两者对不上。
+                    Text(title)
+                        .font(.system(size: 13))
+                        .fixedSize(horizontal: true, vertical: false)
+                        .background(
+                            GeometryReader { geo in
+                                Color.clear.onAppear { titleWidth = geo.size.width }
+                            }
+                        )
+                        .frame(width: showsTitle ? titleWidth : 0, alignment: .leading)
+                        .clipped()
+                }
             }
-            .padding(.horizontal, title.isEmpty ? 7 : 11).padding(.vertical, 6)
-            .background(isActive || hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
+            .padding(.horizontal, showsTitle ? 11 : 7).padding(.vertical, 6)
+            .background(isActive || hovering || renaming || dropTargeted
+                        ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear),
                         in: Capsule())
+            // 编辑态给一圈强调色描边，明确"焦点在这里"；拖拽悬停时同样描边，
+            // 让人知道松手会落在哪个收藏夹
+            .overlay {
+                if renaming || dropTargeted {
+                    Capsule().strokeBorder(Color.systemAccent, lineWidth: 2)
+                }
+            }
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        // 用 DropDelegate 而不是 .dropDestination —— 后者不暴露拖放操作类型，
+        // 光标只能是默认的移动样式；这里要的是"带加号"的复制光标（DropProposal(.copy)），
+        // 它同时也更准确：内容并没有从原处消失，只是多了个归属。
+        .onDrop(of: [.text], delegate: PinboardDropDelegate(
+            draggedClip: draggedClip,
+            onDrop: { onDropClip?($0) },
+            targeted: { dropTargeted = $0 }
+        ))
     }
 }
 
-/// 单张剪贴板卡片：彩色顶栏（取自来源 App 图标主色）+ 内容 + 底栏元信息。
+/// 单张剪贴板卡片：彩色顶栏 + 内容 + 底栏元信息。
+///
+/// 顶栏颜色：归入收藏夹的卡片用收藏夹的颜色（且不再显示来源图标 —— 归属压过来源），
+/// 未归类的取来源 App 图标主色。两条都对标 Paste 的实际行为。
 struct ClipCard: View {
     // 曾经实现过 Equatable + .equatable() 来跳过未变化的卡片（滚动确实更省），
     // 但列表内容变化时会出现"两张卡片同时高亮"——被判定为"没变"的卡片留着过期的
@@ -346,6 +530,8 @@ struct ClipCard: View {
     let now: Date
     /// 是否显示右下角标 —— 只在按住 ⌘ 时为真。
     let showsIndex: Bool
+    /// 所属收藏夹的调色板下标；nil = 未归类，顶栏用来源 App 主色。
+    let boardColorIndex: Int?
 
     static let size = CGSize(width: 235, height: 234)
     static let gap: CGFloat = 21
@@ -356,15 +542,21 @@ struct ClipCard: View {
     /// 正文字号统一，不按内容长短缩放。
     static let bodyFontSize: CGFloat = 13
     private static let headerHeight: CGFloat = 50
-    private static let radius: CGFloat = 12
+    static let radius: CGFloat = 12   // 拖拽缩略图要按同一半径裁圆角，见 CardDragSource
 
-    private var accent: Color { Color(AppAccent.color(forBundleID: item.sourceBundleID)) }
+    private var accent: Color {
+        boardColorIndex.map(PinboardPalette.color) ?? AppAccent.color(forBundleID: item.sourceBundleID)
+    }
+    /// 顶栏文字色。收藏夹色的亮底（黄）要换深色文字，来源色顶栏维持白字。
+    private var headerInk: Color {
+        boardColorIndex.map(PinboardPalette.headerInk) ?? .white
+    }
     /// 卡片底色不随选中变化 —— 选中只靠外圈高亮框表示，与原作一致。
     ///
     /// 用 `underPageBackgroundColor`（深色下 #282828）而不是 `windowBackgroundColor`（#1E1E1E）
     /// —— 卡片浮在玻璃之上，需要比"窗口底"更亮一档才立得起来。用语义色而非硬编码数值，
     /// 才能跟随浅/深色模式与「增强对比度」辅助功能设置。
-    private var surface: Color { Color(nsColor: .underPageBackgroundColor) }
+    private var surface: Color { Palette.surface }
     private var ink: Color { .white }
 
     var body: some View {
@@ -391,21 +583,25 @@ struct ClipCard: View {
         // 底栏叠加而不是占一行：原作的内容区一直铺到卡片底部，字符数和序号浮在淡出的
         // 文字之上。做成 VStack 的独立一行会白白吃掉 30pt 的内容空间。
         .overlay(alignment: .bottom) { footer }
-        .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: UserDefaults.standard.bool(forKey: "plainCard") ? 0 : Self.radius, style: .continuous))
         // 常驻的细描边用 separatorColor（系统标准 white@10%），在通透的玻璃上切出边界，
         // 这样不必靠加深玻璃 tint 换对比 —— 后者反而会让深色卡片陷进背景里。
         // 它用 strokeBorder（内描边）只占 1pt，不影响布局。
         .overlay {
-            RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+            if !UserDefaults.standard.bool(forKey: "plainCard") {
+                RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+                    .strokeBorder(Palette.separator, lineWidth: 1)
+            }
         }
         // 选中高亮框画在卡片**外侧**：strokeBorder 是内描边，会把整条边压在内容上，
         // 看起来就像"框长在卡片里面"。改用 stroke（居中描边）再整体外扩半个线宽。
         .overlay {
-            RoundedRectangle(cornerRadius: Self.radius + Self.focusRing / 2, style: .continuous)
-                .stroke(Color.systemAccent, lineWidth: Self.focusRing)
-                .padding(-Self.focusRing / 2)
-                .opacity(isSelected ? 1 : 0)
+            if !UserDefaults.standard.bool(forKey: "plainCard") {
+                RoundedRectangle(cornerRadius: Self.radius + Self.focusRing / 2, style: .continuous)
+                    .stroke(Color.systemAccent, lineWidth: Self.focusRing)
+                    .padding(-Self.focusRing / 2)
+                    .opacity(isSelected ? 1 : 0)
+            }
         }
         // 不加投影：受控实验里卡片阴影让滚动掉帧从 11 涨到 23（阴影要走离屏渲染，
         // 每张可见卡片一层）。卡片已有 separatorColor 描边，在玻璃背景上足够分明。
@@ -418,11 +614,12 @@ struct ClipCard: View {
                     .font(.system(size: 15, weight: .semibold))
                 Text(item.createdAt.relativeDescription(to: now))
                     .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(headerInk.opacity(0.85))
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(headerInk)
             Spacer(minLength: 4)
-            if let icon = AppAccent.icon(forBundleID: item.sourceBundleID) {
+            // 收藏夹卡片不显示来源图标（归属压过来源），与 Paste 一致。
+            if boardColorIndex == nil, let icon = AppAccent.icon(forBundleID: item.sourceBundleID) {
                 // 只给一层很轻的投影，让图标在同色系顶栏上有边界感（微信的绿图标压在绿顶栏
                 // 那种情况）。试过的另外两条路都不行：套玻璃或描边会在图标画布四周的透明
                 // 留白处显出一圈方框；把顶栏压暗又会让饱和色发脏（绿色降一档就成了墨绿）。
@@ -448,7 +645,7 @@ struct ClipCard: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Checkerboard())
+                        .background(Image(nsImage: CheckerImage.shared))
                 } else {
                     symbolPlaceholder
                 }
@@ -534,6 +731,23 @@ enum Localized {
 
     static var clipboard: String { isChinese ? "剪贴板" : "Clipboard" }
     static var search: String { isChinese ? "搜索" : "Search" }
+    /// 新建的收藏夹跟原作一样叫「未命名」，不编号 —— 反正马上就要改名。
+    static func newPinboardName(_ n: Int) -> String { isChinese ? "未命名" : "Untitled" }
+    static var rename: String { isChinese ? "重命名…" : "Rename…" }
+    // 就叫「删除」——它已经在收藏夹的右键菜单里，再重复一遍主语是噪音
+    static var deleteBoard: String { isChinese ? "删除" : "Delete" }
+    static var color: String { isChinese ? "颜色" : "Color" }
+    static var newBoard: String { isChinese ? "新建收藏夹" : "New Pinboard" }
+    // 叫「收藏」，和「收藏夹」同一套说法 —— 动词和名词对得上，不用在脑子里做一次翻译
+    static var pin: String { isChinese ? "收藏" : "Pin" }
+    static var createPinboard: String { isChinese ? "创建收藏夹…" : "New Pinboard…" }
+    static var removeFromBoard: String { isChinese ? "移出收藏夹" : "Remove from Pinboard" }
+    static var confirm: String { isChinese ? "确定" : "OK" }
+    static var cancel: String { isChinese ? "取消" : "Cancel" }
+    static var deleteItem: String { isChinese ? "删除" : "Delete" }
+    static var emptySearch: String { isChinese ? "没有匹配项" : "No Results" }
+    static var emptyBoard: String { isChinese ? "收藏夹为空" : "Pinboard is Empty" }
+    static var emptyHistory: String { isChinese ? "剪贴板为空" : "Clipboard is Empty" }
 
     static func characters(_ n: Int) -> String {
         isChinese ? "\(n) 个字符" : (n == 1 ? "1 character" : "\(n) characters")
@@ -582,7 +796,7 @@ extension Color {
     /// 用 `controlAccentColor` 而不是 SwiftUI 的 `.accentColor`：后者会被 asset catalog 里的
     /// AccentColor 覆盖，而这里要的正是用户的系统设置。写成计算属性而非 `static let`，
     /// 否则会把首次取到的颜色缓存住，用户改了系统强调色也不跟着变。
-    static var systemAccent: Color { Color(nsColor: .controlAccentColor) }
+    static var systemAccent: Color { Palette.systemAccent }
 
     /// 解析 `#RRGGBB` / `#RRGGBBAA`，用于 color 类型卡片预览。
     init?(hex: String) {
@@ -596,5 +810,35 @@ extension Color {
         let b = Double((value >> (hasAlpha ? 8 : 0)) & 0xFF) / 255
         let a = hasAlpha ? Double(value & 0xFF) / 255 : 1
         self.init(.sRGB, red: r, green: g, blue: b, opacity: a)
+    }
+}
+
+
+/// 收藏夹标签的拖放处理。
+///
+/// 两件事：`DropProposal(operation: .copy)` 给出"带加号"的复制光标（SwiftUI 的
+/// `.dropDestination` 不让指定操作类型），符合"内容不消失、只多个归属"的语义；
+/// 落点数据从 `draggedClip`（即 AppState.draggingClipID）同步拿 —— 拖拽是纯内部的，
+/// id 就在自己手里，走 NSItemProvider 的 XPC 往返每次要 10–25ms，松手的反馈就晚这么多，
+/// 还会把外部拖进来的任意数字文本误当成卡片 id。没有内部拖拽时 validateDrop 直接拒收。
+private struct PinboardDropDelegate: DropDelegate {
+    let draggedClip: () -> Int64?
+    let onDrop: (Int64) -> Void
+    let targeted: (Bool) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool { draggedClip() != nil }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .copy)
+    }
+
+    func dropEntered(info: DropInfo) { targeted(true) }
+    func dropExited(info: DropInfo) { targeted(false) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        targeted(false)
+        guard let clipID = draggedClip() else { return false }
+        onDrop(clipID)
+        return true
     }
 }

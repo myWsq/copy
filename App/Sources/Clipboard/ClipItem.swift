@@ -38,6 +38,9 @@ nonisolated struct Pinboard: Codable, Identifiable, Equatable, Sendable {
     var id: Int64?
     var name: String
     var position: Int
+    /// 调色板下标，见 `PinboardPalette`。存索引而不是色值：调色板将来微调时，
+    /// 已有收藏夹会跟着变，不会留下一堆对不上主题的旧颜色。
+    var colorIndex: Int = 0
 }
 
 nonisolated extension Pinboard: FetchableRecord, MutablePersistableRecord {

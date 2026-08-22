@@ -19,6 +19,25 @@ enum Perf {
         log.notice("⏱ \(label, privacy: .public) \(ms, format: .fixed(precision: 2))ms")
         return result
     }
+
+    /// 量「从此刻到主线程下一次空闲」。
+    ///
+    /// 单点计时罩不住 @Observable 的失效传播 —— 改状态只是打标记，SwiftUI 真正的重新求值、
+    /// 布局与 CA 提交发生在本轮 runloop 稍后。observer 的 order 放在 CA 提交观察者
+    /// （order 2_000_000）之后，同一轮 beforeWaiting 里能把提交耗时也量进去，
+    /// 这个数字才对应用户感到的那一下卡顿。
+    static func stallProbe(_ label: String) {
+        guard enabled else { return }
+        let start = CACurrentMediaTime()
+        let logger = log
+        let observer = CFRunLoopObserverCreateWithHandler(
+            kCFAllocatorDefault, CFRunLoopActivity.beforeWaiting.rawValue, false, 3_000_000
+        ) { @Sendable _, _ in
+            let ms = (CACurrentMediaTime() - start) * 1000
+            logger.notice("⏱ \(label, privacy: .public) → 主线程空闲 \(ms, format: .fixed(precision: 2))ms")
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+    }
 }
 
 /// 统计面板显示期间的帧间隔，找出掉帧。

@@ -59,6 +59,9 @@ nonisolated final class ClipStore: Sendable {
         m.registerMigration("v2_meta") { db in
             try db.alter(table: "clip") { $0.add(column: "meta", .text) }
         }
+        m.registerMigration("v3_pinboard_color") { db in
+            try db.alter(table: "pinboard") { $0.add(column: "colorIndex", .integer).defaults(to: 0) }
+        }
         return m
     }
 
@@ -121,10 +124,11 @@ nonisolated final class ClipStore: Sendable {
     /// 时间倒序取历史。`query` 非空时走 FTS5，否则直接翻表。
     /// 一次取多少条。
     ///
-    /// 卡片用的是 HStack 而非 LazyHStack（原因见 ClipboardBarView 里的注释），所有条目
-    /// 都会真的渲染，条数直接决定滚动开销。面板是"最近用过的"快速取用口，不是历史浏览器 ——
-    /// 更早的内容靠搜索找，所以不必一次铺出几百张。
-    static let pageSize = 100
+    /// 卡片用的是 HStack 而非 LazyHStack（原因见 ClipboardBarView 里的注释），所有条目都会
+    /// 真的渲染，条数直接决定切换收藏夹和滚动的开销 —— 切换要把上一批视图全销毁、下一批全
+    /// 建出来，100 条时这一下明显不跟手。面板是"最近用过的"快速取用口，不是历史浏览器，
+    /// 更早的内容靠搜索找，40 条约合 2.5 屏，够用。
+    static let pageSize = 60
 
     func recent(limit: Int = pageSize, query: String = "", pinboardID: Int64? = nil) throws -> [ClipItem] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
@@ -152,14 +156,60 @@ nonisolated final class ClipStore: Sendable {
         }
     }
 
+    // MARK: - Pinboards
+
+    /// 新建一个分类板，排在最后。
+    @discardableResult
+    func createPinboard(name: String, colorIndex: Int) throws -> Pinboard {
+        try dbQueue.write { db in
+            let last = try Int.fetchOne(db, sql: "SELECT COALESCE(MAX(position), -1) FROM pinboard") ?? -1
+            var board = Pinboard(name: name, position: last + 1, colorIndex: colorIndex)
+            try board.insert(db)
+            return board
+        }
+    }
+
+    func setPinboardColor(id: Int64, to index: Int) throws {
+        _ = try dbQueue.write { db in
+            try Pinboard.filter(key: id).updateAll(db, Column("colorIndex").set(to: index))
+        }
+    }
+
+    func renamePinboard(id: Int64, to name: String) throws {
+        _ = try dbQueue.write { db in
+            try Pinboard.filter(key: id).updateAll(db, Column("name").set(to: name))
+        }
+    }
+
+    /// 删除分类板。板里的条目不会跟着消失 —— 外键是 `onDelete: .setNull`，
+    /// 它们会回到主列表，只是从此不再受"归类条目免于过期清理"的保护。
+    func deletePinboard(id: Int64) throws {
+        _ = try dbQueue.write { db in
+            try Pinboard.deleteOne(db, key: id)
+        }
+    }
+
+    /// 把一条记录归入某个板；传 nil 表示移出。
+    func assign(clip clipID: Int64, to pinboardID: Int64?) throws {
+        _ = try dbQueue.write { db in
+            try ClipItem.filter(key: clipID).updateAll(db, Column("pinboardID").set(to: pinboardID))
+        }
+    }
+
     func pinboards() throws -> [Pinboard] {
         try dbQueue.read { try Pinboard.order(Column("position")).fetchAll($0) }
     }
 
-    /// 数据库变更的观察流，供 UI 订阅（GRDB 会在事务提交后触发）。
+    /// 变更观察流。语义是**只跟条数**：增删触发，改字段与 `pinboard` 表不触发。
+    ///
+    /// `removeDuplicates()` 不是可有可无的优化：GRDB 的区域跟踪是表粒度，UPDATE（归类、
+    /// touch）同样命中 COUNT 的区域（实测），没有去重的话每次归类都会多出一次全量
+    /// reload。所以 `AppState` 里那些写操作后面的手动 `reload()` 不是冗余，删掉就会
+    /// "数据进去了但界面不刷新"。
     func observeChanges(_ onChange: @escaping @Sendable () -> Void) -> AnyDatabaseCancellable {
         ValueObservation
             .tracking { try ClipItem.fetchCount($0) }
+            .removeDuplicates()
             .start(in: dbQueue, scheduling: .async(onQueue: .main),
                    onError: { Log.store.error("observe: \($0)") },
                    onChange: { _ in onChange() })

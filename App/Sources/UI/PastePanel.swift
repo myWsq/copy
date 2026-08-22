@@ -17,6 +17,9 @@ final class PastePanel: NSPanel {
     /// 动画播放期间两者是脱节的：滑出还没播完窗口仍 visible，于是连点会走错分支。
     private var isPresented = false
     private let frames = FrameMonitor()
+    /// 卡片拖拽的状态归这里，不归卡片视图 —— 会话的生命周期由系统决定，
+    /// 卡片视图的由 SwiftUI 决定，两者不同步。详见 `CardDragCoordinator`。
+    let dragCoordinator: CardDragCoordinator
     private var revision = 0
 
     /// Paste 的条形面板贴屏幕底边通栏。
@@ -42,9 +45,11 @@ final class PastePanel: NSPanel {
     init(state: AppState, monitor: ClipboardMonitor?) {
         self.state = state
         self.monitor = monitor
+        self.dragCoordinator = CardDragCoordinator(state: state)
         super.init(contentRect: .zero,
                    styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
                    backing: .buffered, defer: false)
+        state.dragCoordinator = dragCoordinator   // 落点侧收预览要经它，见 AppState.dropAssign
 
         isOpaque = false
         backgroundColor = .clear
@@ -88,6 +93,27 @@ final class PastePanel: NSPanel {
     }
 
     override var canBecomeKey: Bool { true }
+
+    /// 点击落在正在编辑的输入框之外时，先让它交出焦点（从而触发保存），再把事件放行。
+    ///
+    /// 收在这一处，而不是给每个按钮挨个接线。原因是 SwiftUI 的 Button 和手势**不会**让
+    /// NSTextField 放弃 first responder —— 两套体系各管各的。逐个包装的做法维护不住：
+    /// 工具栏每加一个按钮就得记得包一次，漏一个就出现"改了名字一点别处就没了"。
+    /// 在 sendEvent 里拦，天然覆盖所有后来新增的控件。
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown {
+            releaseEditorIfClickedOutside(event)
+        }
+        super.sendEvent(event)
+    }
+
+    private func releaseEditorIfClickedOutside(_ event: NSEvent) {
+        // 文本编辑期间 first responder 是共享的 field editor（NSTextView），不是那个 NSTextField
+        guard let editor = firstResponder as? NSTextView else { return }
+        let point = editor.convert(event.locationInWindow, from: nil)
+        guard !editor.bounds.contains(point) else { return }
+        makeFirstResponder(nil)
+    }
 
     /// 面板该出现在哪块屏幕。
     ///
@@ -141,6 +167,9 @@ final class PastePanel: NSPanel {
         Perf.time("取前台App") { state.previousApp = NSWorkspace.shared.frontmostApplication }
         state.query = ""
         state.isSearching = false
+        // 相对时间的参考时刻只在这里刷新 —— 面板开着期间它保持不动，reload 才能只
+        // 重渲染真正变化的卡片（见 AppState.referenceDate 的注释）。
+        state.referenceDate = Date()
         Perf.time("reload") { state.reload() }
         // 每次打开都重建 hosting view。两条路都堵死了才只能这样：
         //   1. 窗口 orderOut 期间 SwiftUI 会停止追踪 @Observable，隐藏时发生的数据变化
@@ -241,6 +270,7 @@ final class PastePanel: NSPanel {
         // 私有区（0xF700+），**不算控制字符**，只判断控制字符会把方向键当成正常输入 ——
         // 结果就是按方向键反而进了搜索态、往搜索框里塞了个看不见的字符，选中纹丝不动。
         if !state.isSearching,
+           state.renamingPinboardID == nil,     // 正在改名，键盘归那个输入框
            !event.modifierFlags.contains(.command),
            !event.modifierFlags.contains(.control),
            !event.modifierFlags.contains(.function),
@@ -251,8 +281,8 @@ final class PastePanel: NSPanel {
             return
         }
         switch Int(event.keyCode) {
-        case 123: state.move(by: -1)
-        case 124: state.move(by: 1)
+        case 123: event.modifierFlags.contains(.command) ? state.cyclePinboard(by: -1) : state.move(by: -1)
+        case 124: event.modifierFlags.contains(.command) ? state.cyclePinboard(by: 1) : state.move(by: 1)
         case 53: hide()
         case 36, 76: pasteSelected(plainText: event.modifierFlags.contains(.shift))
         default: super.keyDown(with: event)
@@ -268,6 +298,13 @@ final class PastePanel: NSPanel {
     /// ⌘1…⌘9 快速粘贴第 N 项。走 keyEquivalent 而非 keyDown —— 带 ⌘ 的按键会先经过
     /// 这条链路，若等到 keyDown 已被文本框吃掉。
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // ⇧⌘N 新建分类
+        if event.modifierFlags.contains([.command, .shift]),
+           event.charactersIgnoringModifiers?.lowercased() == "n" {
+            state.createPinboard()
+            return true
+        }
+
         guard event.modifierFlags.contains(.command),
               let n = Int(event.charactersIgnoringModifiers ?? ""), (1...9).contains(n),
               state.items.indices.contains(n - 1)
